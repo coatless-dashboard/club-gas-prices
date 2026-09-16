@@ -1,9 +1,9 @@
 """A small, realistic `site/data/` set, built without running the pipeline.
 
-Every price here is a real value captured on 2026-09-15 and kept in
-`docs/superpowers/research/2026-09-15/responses/`; the rates are the Frankfurter
-rates of 2026-09-14 from `fx_frankfurter_v2_curl.body`. The dashboard reads only
-`site/data/`, so this is enough to render and smoke-test the page locally.
+Every price here is a real value captured from the live sources on 2026-09-15,
+and the rates are the Frankfurter reference rates of 2026-09-14. The dashboard
+reads only `site/data/`, so this is enough to render and smoke-test the page
+locally.
 
     uv run python tests/fixtures/site_sample.py site/data
 """
