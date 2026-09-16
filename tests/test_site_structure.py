@@ -78,3 +78,25 @@ def test_the_scss_files_define_the_ramp_in_both_themes():
         assert "/*-- scss:rules --*/" in text
         for token in ("--cgp-ramp-1", "--cgp-ramp-5", "--cgp-missing", "--cgp-marker-stroke"):
             assert token in text, f"{path.name} is missing {token}"
+
+
+def test_the_map_lifecycle_pieces_are_present():
+    text = read_qmd()
+    assert text.count("data-marker-count") >= 2  # created with it, then updated
+    assert "new ResizeObserver" in text
+    assert "invalidateSize()" in text
+    assert "L.tileLayer(" in text
+    assert "basemap.dark_url" in text and "basemap.light_url" in text
+    assert "cgp-tiles-invert" in text
+
+
+def test_station_selection_uses_the_query_string():
+    text = read_qmd()
+    assert 'history.pushState({}, "", "?station=" + encodeURIComponent(key) + "#station")' in text
+    assert 'QuartoDashboardUtils.showPage("#station")' in text
+    assert "selectedStation = Generators.observe(" in text
+
+
+def test_station_history_is_always_filtered_by_station_key():
+    for match in re.finditer(r"FROM history\b(.*?)`", read_qmd(), re.S):
+        assert "WHERE station_key IN (" in match.group(1)

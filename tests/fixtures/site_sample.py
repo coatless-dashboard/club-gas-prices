@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -37,9 +37,7 @@ NOTICE = (
     "from the price at the pump."
 )
 
-RELEASE_DL = (
-    "https://github.com/coatless-dashboard/costco-gas-prices/releases/download/current/"
-)
+RELEASE_DL = "https://github.com/coatless-dashboard/costco-gas-prices/releases/download/current/"
 
 # fmt: off
 STATIONS = [
@@ -160,7 +158,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     dates = [end - timedelta(days=days - 1 - i) for i in range(days)]
-    captured = datetime(end.year, end.month, end.day, 18, 17, tzinfo=timezone.utc)
+    captured = datetime(end.year, end.month, end.day, 18, 17, tzinfo=UTC)
     captured_iso = captured.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     history_rows: list[dict] = []

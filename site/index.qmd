@@ -329,22 +329,1136 @@ freshnessNotice = {
 html`<div class="cgp-notice cgp-sidebar-section">${meta.notice}</div>`
 ```
 
+```{ojs}
+//| output: false
+countryBounds = {
+  const box = new Map();
+  const all = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const station of latest) {
+    if (station.lat == null || station.lon == null) continue;
+    const b = box.get(station.country) || [Infinity, Infinity, -Infinity, -Infinity];
+    b[0] = Math.min(b[0], station.lat);
+    b[1] = Math.min(b[1], station.lon);
+    b[2] = Math.max(b[2], station.lat);
+    b[3] = Math.max(b[3], station.lon);
+    box.set(station.country, b);
+    all[0] = Math.min(all[0], station.lat);
+    all[1] = Math.min(all[1], station.lon);
+    all[2] = Math.max(all[2], station.lat);
+    all[3] = Math.max(all[3], station.lon);
+  }
+  const out = new Map();
+  for (const [code, b] of box) out.set(code, [[b[0], b[1]], [b[2], b[3]]]);
+  if (isFinite(all[0])) out.set("__all__", [[all[0], all[1]], [all[2], all[3]]]);
+  return out;
+}
+
+// The card body is laid out after the cell runs, and Leaflet needs a real size.
+mapResize = {
+  const el = mapEl;
+  const map = el._map;
+  const body = el.closest(".card-body") || el.parentElement;
+  let fitted = false;
+  const apply = () => {
+    const height = Math.max(300, Math.floor(body.clientHeight));
+    if (Math.abs(el.clientHeight - height) > 1) el.style.height = height + "px";
+    map.invalidateSize();
+    if (!fitted && el.clientWidth > 0 && el.clientHeight > 0) {
+      fitted = true;
+      const bounds = countryBounds.get("__all__");
+      if (bounds) map.fitBounds(bounds, {padding: [24, 24], maxZoom: 6});
+    }
+  };
+  const observer = new ResizeObserver(apply);
+  observer.observe(body);
+  apply();
+  invalidation.then(() => observer.disconnect());
+  return true;
+}
+
+mapTiles = {
+  const el = mapEl;
+  const map = el._map;
+  const basemap = meta.basemap;
+  const options = {
+    attribution: basemap.attribution,
+    maxZoom: basemap.max_zoom,
+    crossOrigin: true
+  };
+  if (basemap.subdomains) options.subdomains = basemap.subdomains;
+  const layer = L.tileLayer(theme === "dark" ? basemap.dark_url : basemap.light_url, options);
+  layer.addTo(map);
+  if (el._tiles) map.removeLayer(el._tiles);
+  el._tiles = layer;
+  el.classList.toggle("cgp-tiles-invert", Boolean(basemap.dark_filter) && theme === "dark");
+  return theme;
+}
+
+effectiveColorMode = currency === "Local" && colorMode === "absolute" ? "rank" : colorMode
+
+// "Absolute" is a single USD scale, so it is unavailable in local currency.
+absoluteGuard = {
+  const input = (viewof colorMode).querySelector('input[data-value="absolute"]');
+  const disabled = currency === "Local";
+  if (input) {
+    input.disabled = disabled;
+    const label = input.closest("label");
+    if (label) label.title = disabled ? "Absolute needs USD" : "";
+  }
+  return disabled;
+}
+
+absoluteDomain = {
+  if (effectiveColorMode !== "absolute") return null;
+  const values = [];
+  for (const station of latest) {
+    const value = stationPrice(station, grade, "USD", volume);
+    if (value != null) values.push(value);
+  }
+  if (values.length < 2) return null;
+  values.sort((a, b) => a - b);
+  const lo = quantileSorted(values, 0.02);
+  const hi = quantileSorted(values, 0.98);
+  return hi > lo ? [lo, hi] : null;
+}
+
+rankPercentiles = {
+  if (effectiveColorMode !== "rank") return new Map();
+  const byCountry = new Map();
+  for (const station of latest) {
+    const value = stationPrice(station, grade, currency, volume);
+    if (value == null) continue;
+    if (!byCountry.has(station.country)) byCountry.set(station.country, []);
+    byCountry.get(station.country).push({key: station.station_key, value});
+  }
+  const out = new Map();
+  for (const [, rows] of byCountry) {
+    rows.sort((a, b) => a.value - b.value);
+    const n = rows.length;
+    let i = 0;
+    while (i < n) {
+      let j = i;
+      while (j + 1 < n && rows[j + 1].value === rows[i].value) j += 1;
+      const averageRank = (i + j) / 2 + 1; // 1-based; ties share the average
+      const pct = n === 1 ? 0.5 : (averageRank - 1) / (n - 1);
+      for (let k = i; k <= j; k += 1) out.set(rows[k].key, pct);
+      i = j + 1;
+    }
+  }
+  return out;
+}
+
+function gradeRowHtml(label, entry, vol) {
+  const digits = vol === "gal" ? 3 : 4;
+  const unit = vol === "gal" ? "/gal" : "/L";
+  const localPerVolume = perVolume(entry.price_local_per_litre, vol);
+  const usdPerVolume = perVolume(entry.price_usd_per_litre, vol);
+  const usdCell =
+    usdPerVolume == null
+      ? '<td class="cgp-popup-foot">no USD value</td>'
+      : `<td>${usdPerVolume.toFixed(digits)} USD${unit}</td>`;
+  return (
+    `<tr><td>${escapeHtml(label)}</td>` +
+    `<td>${escapeHtml(entry.price_raw)} ${escapeHtml(entry.price_unit)}</td>` +
+    `<td>${localPerVolume == null ? "—" : localPerVolume.toFixed(digits)} ` +
+    `${escapeHtml(entry.currency)}${unit}</td>` +
+    usdCell +
+    "</tr>"
+  );
+}
+
+function popupHtml(station, vol) {
+  const parts = [];
+  parts.push(
+    `<div class="cgp-popup-title">${escapeHtml(station.name)}` +
+      (station.name_local
+        ? ` <span class="cgp-local">${escapeHtml(station.name_local)}</span>`
+        : "") +
+      "</div>"
+  );
+  const place = [station.city, station.region].filter((v) => v).join(", ");
+  parts.push(
+    `<div class="cgp-popup-place">${escapeHtml(place)}${place ? " · " : ""}` +
+      `${escapeHtml(COUNTRY_NAMES[station.country] || station.country)}</div>`
+  );
+  const rows = [];
+  for (const key of ["regular", "premium", "diesel"]) {
+    const entry = gradeEntry(station, key);
+    if (entry) rows.push(gradeRowHtml(GRADE_LABELS[key], entry, vol));
+  }
+  for (const [raw, entry] of Object.entries(station.other || {})) {
+    rows.push(gradeRowHtml(raw, entry, vol));
+  }
+  parts.push(`<table>${rows.join("")}</table>`);
+  const any =
+    gradeEntry(station, "regular") ||
+    gradeEntry(station, "premium") ||
+    gradeEntry(station, "diesel");
+  if (any && any.currency !== "USD" && any.fx_usd_per_unit != null) {
+    parts.push(
+      `<div class="cgp-popup-foot">1 ${escapeHtml(any.currency)} = ` +
+        `${any.fx_usd_per_unit.toPrecision(6)} USD as of ${escapeHtml(any.fx_rate_date)} ` +
+        `(${escapeHtml(any.fx_source)})</div>`
+    );
+  }
+  const age = hoursAgo(station.captured_at_utc, new Date());
+  if (age != null) {
+    parts.push(
+      `<div class="cgp-popup-foot">updated ${Math.max(0, Math.round(age))} h ago</div>`
+    );
+  }
+  parts.push(
+    `<div class="cgp-popup-foot"><a href="?station=${encodeURIComponent(station.station_key)}#station" ` +
+      `data-station-link="${escapeHtml(station.station_key)}">Station history</a></div>`
+  );
+  return `<div class="cgp-popup">${parts.join("")}</div>`;
+}
+
+// Rebuilt whenever Grade, Currency, Volume or the colour mode changes.
+markerLayerUpdate = {
+  const el = mapEl;
+  const layer = el._markers;
+  const pal = palette;
+  const domain = absoluteDomain;
+  const ranks = rankPercentiles;
+  layer.clearLayers();
+  let count = 0;
+  for (const station of latest) {
+    if (station.lat == null || station.lon == null) continue;
+    if (!gradeEntry(station, grade)) continue;
+    const value = stationPrice(station, grade, currency, volume);
+    let fill = pal.missing;
+    if (value != null && effectiveColorMode === "rank") {
+      fill = colorForFraction(ranks.get(station.station_key), pal);
+    } else if (value != null && domain) {
+      const usd = stationPrice(station, grade, "USD", volume);
+      const t =
+        usd == null ? null : Math.min(1, Math.max(0, (usd - domain[0]) / (domain[1] - domain[0])));
+      fill = colorForFraction(t, pal);
+    }
+    const marker = L.circleMarker([station.lat, station.lon], {
+      radius: 6,
+      weight: 1,
+      color: pal.stroke,
+      opacity: 0.9,
+      fillColor: fill,
+      fillOpacity: 0.9
+    });
+    marker.bindPopup(() => popupHtml(station, volume), {maxWidth: 340});
+    marker.addTo(layer);
+    count += 1;
+  }
+  el.setAttribute("data-marker-count", String(count));
+  return count;
+}
+```
+
+```{ojs}
+//| output: false
+compareRows = db
+  ? db.query(`
+      SELECT country,
+             strftime(capture_date, '%Y-%m-%d') AS d,
+             n_stations,
+             n_stations_usd,
+             median_local_per_litre,
+             p25_local_per_litre,
+             p75_local_per_litre,
+             median_usd_per_litre,
+             p25_usd_per_litre,
+             p75_usd_per_litre
+      FROM summary_daily
+      WHERE level = 'country' AND grade = ${sqlText(grade)}
+      ORDER BY country, capture_date
+    `)
+  : []
+
+// Each country uses its own newest day that has stations; an older day is stale.
+compareLatest = {
+  const newestByCountry = new Map();
+  for (const row of compareRows) {
+    if (!(row.n_stations > 0)) continue;
+    const previous = newestByCountry.get(row.country);
+    if (!previous || row.d > previous.d) newestByCountry.set(row.country, row);
+  }
+  let newest = "";
+  for (const row of newestByCountry.values()) if (row.d > newest) newest = row.d;
+  const rows = COUNTRY_ORDER.map((code) => {
+    const row = newestByCountry.get(code);
+    if (!row) return {country: code, sold: false, stale: false};
+    return Object.assign({}, row, {sold: true, stale: row.d < newest});
+  });
+  return {rows, newest};
+}
+
+function compareTableEl() {
+  const body = compareLatest.rows.map((row) => {
+    if (!row.sold) {
+      return html`<tr><td>${COUNTRY_NAMES[row.country]}</td>
+        <td colspan="5" class="cgp-stale">not sold</td></tr>`;
+    }
+    return html`<tr>
+      <td>${COUNTRY_NAMES[row.country]}${
+        row.stale ? html` <span class="cgp-stale">stale</span>` : ""
+      }</td>
+      <td>${currencyOf.get(row.country) || ""}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(row.median_local_per_litre, volume), priceDigits)}</td>
+      <td class="cgp-num">${fmtNumber(
+        perVolume(row.p25_local_per_litre, volume),
+        priceDigits
+      )}–${fmtNumber(perVolume(row.p75_local_per_litre, volume), priceDigits)}</td>
+      <td class="cgp-num">${row.n_stations}</td>
+      <td>${row.d}</td>
+    </tr>`;
+  });
+  return html`<table class="cgp-table">
+    <thead><tr>
+      <th>Country</th><th>Currency</th>
+      <th class="cgp-num">Median ${volumeShort}</th>
+      <th class="cgp-num">p25–p75</th>
+      <th class="cgp-num">Stations</th>
+      <th>Day</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table>`;
+}
+```
+
+```{ojs}
+//| output: false
+trendCountryRows = db
+  ? db.query(`
+      SELECT country,
+             strftime(capture_date, '%Y-%m-%d') AS d,
+             n_stations,
+             median_local_per_litre,
+             p25_local_per_litre,
+             p75_local_per_litre,
+             median_usd_per_litre,
+             p25_usd_per_litre,
+             p75_usd_per_litre
+      FROM summary_daily
+      WHERE level = 'country' AND grade = ${sqlText(grade)}
+      ORDER BY country, capture_date
+    `)
+  : []
+
+trendRegionRows =
+  db && trendCountry !== "All countries"
+    ? db.query(`
+        SELECT region,
+               strftime(capture_date, '%Y-%m-%d') AS d,
+               n_stations,
+               median_local_per_litre,
+               median_usd_per_litre
+        FROM summary_daily
+        WHERE level = 'region'
+          AND country = ${sqlText(trendCountry)}
+          AND grade = ${sqlText(grade)}
+        ORDER BY region, capture_date
+      `)
+    : []
+
+trendRegionOptions = {
+  const counts = new Map();
+  for (const row of trendRegionRows) {
+    if (row.n_stations > (counts.get(row.region) || 0)) counts.set(row.region, row.n_stations);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+}
+
+trendAllUsd = {
+  const data = trendCountryRows
+    .filter((row) => row.median_usd_per_litre != null)
+    .map((row) => ({
+      country: row.country,
+      name: COUNTRY_NAMES[row.country],
+      day: toDay(row.d),
+      median: perVolume(row.median_usd_per_litre, volume),
+      p25: perVolume(row.p25_usd_per_litre, volume),
+      p75: perVolume(row.p75_usd_per_litre, volume)
+    }));
+  if (!data.length) {
+    return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
+  }
+  const lastDay = Math.max(...data.map((row) => row.day.getTime()));
+  const marks = [];
+  if (showBand) {
+    marks.push(
+      Plot.areaY(data, {
+        x: "day",
+        y1: "p25",
+        y2: "p75",
+        z: "country",
+        fill: (row) => COUNTRY_COLORS[row.country],
+        fillOpacity: 0.14
+      })
+    );
+  }
+  marks.push(
+    Plot.line(data, {
+      x: "day",
+      y: "median",
+      z: "country",
+      stroke: (row) => COUNTRY_COLORS[row.country],
+      strokeWidth: 2
+    }),
+    Plot.dot(data, {
+      x: "day",
+      y: "median",
+      r: 2,
+      fill: (row) => COUNTRY_COLORS[row.country],
+      title: (row) =>
+        `${row.name} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)} USD`
+    }),
+    Plot.text(
+      data.filter((row) => row.day.getTime() === lastDay),
+      {x: "day", y: "median", text: "country", dx: 14, fill: (row) => COUNTRY_COLORS[row.country]}
+    )
+  );
+  return Plot.plot({
+    height: 420,
+    marginRight: 60,
+    style: {background: "transparent", color: palette.text},
+    x: {label: "Capture date (UTC)", grid: true},
+    y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
+    marks
+  });
+}
+
+trendAllLocal = {
+  const byCountry = new Map();
+  for (const row of trendCountryRows) {
+    if (row.median_local_per_litre == null) continue;
+    if (!byCountry.has(row.country)) byCountry.set(row.country, []);
+    byCountry.get(row.country).push({
+      day: toDay(row.d),
+      median: perVolume(row.median_local_per_litre, volume),
+      p25: perVolume(row.p25_local_per_litre, volume),
+      p75: perVolume(row.p75_local_per_litre, volume)
+    });
+  }
+  const panels = COUNTRY_ORDER.filter((code) => byCountry.has(code)).map((code) => {
+    const rows = byCountry.get(code);
+    const marks = [];
+    if (showBand) {
+      marks.push(
+        Plot.areaY(rows, {
+          x: "day",
+          y1: "p25",
+          y2: "p75",
+          fill: COUNTRY_COLORS[code],
+          fillOpacity: 0.16
+        })
+      );
+    }
+    marks.push(
+      Plot.line(rows, {x: "day", y: "median", stroke: COUNTRY_COLORS[code], strokeWidth: 2}),
+      Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]})
+    );
+    const figure = Plot.plot({
+      height: 190,
+      marginLeft: 52,
+      style: {background: "transparent", color: palette.text},
+      x: {label: null, ticks: 4, grid: true},
+      y: {label: `${currencyOf.get(code) || ""} ${volumeShort}`, grid: true, nice: true},
+      marks
+    });
+    return html`<div><div class="cgp-stale">${COUNTRY_NAMES[code]}</div>${figure}</div>`;
+  });
+  if (!panels.length) {
+    return html`<div class="cgp-notice">No local values for ${GRADE_LABELS[grade]}.</div>`;
+  }
+  return html`<div class="cgp-small-multiples">${panels}</div>`;
+}
+
+trendRegionPlot = {
+  const unit = currency === "USD" ? "USD" : currencyOf.get(trendCountry) || "local";
+  if (!trendRegionOptions.length) {
+    const rows = trendCountryRows
+      .filter((row) => row.country === trendCountry)
+      .map((row) => ({
+        day: toDay(row.d),
+        median: perVolume(
+          currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+          volume
+        )
+      }))
+      .filter((row) => row.median != null);
+    const figure = Plot.plot({
+      height: 400,
+      style: {background: "transparent", color: palette.text},
+      x: {label: "Capture date (UTC)", grid: true},
+      y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
+      marks: [
+        Plot.line(rows, {
+          x: "day",
+          y: "median",
+          stroke: COUNTRY_COLORS[trendCountry],
+          strokeWidth: 2
+        }),
+        Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[trendCountry]})
+      ]
+    });
+    return html`<div>
+      <div class="cgp-notice">No regional breakdown for ${COUNTRY_NAMES[trendCountry]};
+        showing the national series.</div>
+      ${figure}
+    </div>`;
+  }
+  const chosen = new Set(trendRegions);
+  const data = trendRegionRows
+    .filter((row) => chosen.has(row.region))
+    .map((row) => ({
+      region: row.region,
+      day: toDay(row.d),
+      median: perVolume(
+        currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+        volume
+      )
+    }))
+    .filter((row) => row.median != null);
+  if (!data.length) return html`<div class="cgp-notice">Pick at least one region.</div>`;
+  return Plot.plot({
+    height: 420,
+    marginRight: 80,
+    style: {background: "transparent", color: palette.text},
+    color: {legend: true, scheme: "observable10"},
+    x: {label: "Capture date (UTC)", grid: true},
+    y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
+    marks: [
+      Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
+      Plot.dot(data, {
+        x: "day",
+        y: "median",
+        r: 2,
+        fill: "region",
+        title: (row) =>
+          `${row.region} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)}`
+      })
+    ]
+  });
+}
+```
+
+```{ojs}
+//| output: false
+// The selection lives in the query string; the hash is only ever a page id.
+stationChannel = {
+  const listeners = new Set();
+  return {
+    read: () => new URLSearchParams(location.search).get("station"),
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    notify(key) {
+      for (const fn of listeners) fn(key);
+    },
+    open(key) {
+      history.pushState({}, "", "?station=" + encodeURIComponent(key) + "#station");
+      if (window.QuartoDashboardUtils && typeof QuartoDashboardUtils.showPage === "function") {
+        QuartoDashboardUtils.showPage("#station");
+      }
+      // pushState fires no event, so tell the generator directly.
+      this.notify(key);
+    }
+  };
+}
+
+selectedStation = Generators.observe((notify) => {
+  notify(stationChannel.read());
+  const onPop = () => notify(stationChannel.read());
+  window.addEventListener("popstate", onPop);
+  const unsubscribe = stationChannel.subscribe((key) => notify(key));
+  return () => {
+    window.removeEventListener("popstate", onPop);
+    unsubscribe();
+  };
+})
+
+selectedMeta = selectedStation
+  ? stationsAll.find((row) => row.station_key === selectedStation) || null
+  : null
+
+selectedLatest = selectedStation
+  ? latest.find((row) => row.station_key === selectedStation) || null
+  : null
+
+nearestStations = {
+  if (!selectedLatest || selectedLatest.lat == null) return [];
+  return latest
+    .filter(
+      (row) =>
+        row.station_key !== selectedLatest.station_key &&
+        row.country === selectedLatest.country &&
+        row.status === "active" &&
+        row.lat != null &&
+        row.lon != null
+    )
+    .map((row) => ({
+      station_key: row.station_key,
+      name: row.name,
+      km: haversineKm(selectedLatest.lat, selectedLatest.lon, row.lat, row.lon)
+    }))
+    .sort((a, b) => a.km - b.km)
+    .slice(0, 5);
+}
+
+stationHistoryRows = {
+  if (!db || !selectedMeta) return [];
+  const keys = [selectedMeta.station_key, ...nearestStations.map((row) => row.station_key)];
+  return db.query(`
+    SELECT station_key,
+           grade,
+           strftime(capture_date, '%Y-%m-%d') AS d,
+           price_local_per_litre,
+           price_usd_per_litre,
+           currency
+    FROM history
+    WHERE station_key IN (${sqlList(keys)})
+    ORDER BY station_key, grade, capture_date
+  `);
+}
+
+stationMedianRows = {
+  if (!db || !selectedMeta) return [];
+  const level = selectedMeta.region == null ? "country" : "region";
+  const regionClause =
+    selectedMeta.region == null ? "region IS NULL" : `region = ${sqlText(selectedMeta.region)}`;
+  return db.query(`
+    SELECT strftime(capture_date, '%Y-%m-%d') AS d,
+           median_local_per_litre,
+           median_usd_per_litre
+    FROM summary_daily
+    WHERE level = '${level}'
+      AND country = ${sqlText(selectedMeta.country)}
+      AND ${regionClause}
+      AND grade = ${sqlText(grade)}
+    ORDER BY capture_date
+  `);
+}
+```
+
 # Map
 
-_(the Map page is built next.)_
+## Row {height="14%"}
+
+::: {.card title="Colour and countries" padding="4px"}
+
+```{ojs}
+viewof colorMode = radioControl(
+  "colormode",
+  [["Rank within country", "rank"], ["Absolute", "absolute"]],
+  "rank",
+  "Colour"
+)
+```
+
+```{ojs}
+mapLegend = {
+  const pal = palette;
+  const caption =
+    effectiveColorMode === "rank"
+      ? "cheapest to dearest within each country"
+      : `USD ${volumeLabel}, 2nd to 98th percentile`;
+  return html`<div class="cgp-legend"><span>Cheaper</span>${pal.ramp.map(
+    (color) => html`<span class="cgp-swatch" style=${"background:" + color}></span>`
+  )}<span>Dearer</span><span>· ${caption}</span>
+    <span class="cgp-swatch" style=${"background:" + pal.missing}></span>
+    <span>no USD value</span></div>`;
+}
+```
+
+```{ojs}
+countryPills = {
+  const el = mapEl;
+  const buttons = ["World", ...COUNTRY_ORDER].map((code) => {
+    const button = html`<button type="button" data-zoom=${code}>${
+      code === "World" ? "World" : COUNTRY_NAMES[code]
+    }</button>`;
+    button.addEventListener("click", () => {
+      const bounds = countryBounds.get(code === "World" ? "__all__" : code);
+      if (bounds) el._map.fitBounds(bounds, {padding: [24, 24], maxZoom: 11});
+    });
+    return button;
+  });
+  return html`<div class="cgp-pills">${buttons}</div>`;
+}
+```
+
+:::
+
+## Row {height="86%"}
+
+::: {.card title="Stations" padding="0px"}
+
+```{ojs}
+// Created once: this cell depends only on `latest`, which never changes.
+// It must be defined in the card that shows it, because an OJS cell's node is
+// inserted where the cell is defined.
+mapEl = {
+  const el = html`<div class="cgp-map" data-marker-count="0" style="height:360px"></div>`;
+  const map = L.map(el, {zoomControl: true, worldCopyJump: true, preferCanvas: true});
+  map.setView([25, -30], 2);
+  el._map = map;
+  el._markers = L.layerGroup().addTo(map);
+  map.on("popupopen", (event) => {
+    const node = event.popup.getElement();
+    const link = node ? node.querySelector("[data-station-link]") : null;
+    if (!link) return;
+    link.addEventListener("click", (clickEvent) => {
+      clickEvent.preventDefault();
+      stationChannel.open(link.getAttribute("data-station-link"));
+    });
+  });
+  invalidation.then(() => map.remove());
+  return el;
+}
+```
+
+:::
 
 # Compare
 
-_(the Compare page is built next.)_
+## Row {height="62%"}
+
+::: {.card title="Median price by country"}
+
+```{ojs}
+compareView = {
+  if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
+  if (currency === "Local") return compareTableEl();
+  const data = compareLatest.rows
+    .filter((row) => row.sold)
+    .map((row) => ({
+      label: `${COUNTRY_NAMES[row.country]} · ${row.d}${row.stale ? " (stale)" : ""}`,
+      country: row.country,
+      median: perVolume(row.median_usd_per_litre, volume),
+      p25: perVolume(row.p25_usd_per_litre, volume),
+      p75: perVolume(row.p75_usd_per_litre, volume),
+      n: row.n_stations_usd
+    }))
+    .filter((row) => row.median != null);
+  if (!data.length) {
+    return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
+  }
+  return Plot.plot({
+    height: 60 + data.length * 36,
+    marginLeft: 200,
+    marginRight: 70,
+    style: {background: "transparent", color: palette.text},
+    x: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
+    y: {domain: data.map((row) => row.label), label: null},
+    marks: [
+      Plot.ruleY(data, {y: "label", x1: "p25", x2: "p75", stroke: palette.grid, strokeWidth: 8}),
+      Plot.dot(data, {
+        y: "label",
+        x: "median",
+        r: 6,
+        fill: (row) => COUNTRY_COLORS[row.country],
+        stroke: palette.stroke,
+        strokeWidth: 1,
+        title: (row) => `${fmtNumber(row.median, priceDigits)} USD, ${row.n} stations`
+      }),
+      Plot.text(data, {
+        y: "label",
+        x: "median",
+        text: (row) => fmtNumber(row.median, priceDigits),
+        dy: -14,
+        fill: palette.text
+      })
+    ]
+  });
+}
+```
+
+:::
+
+## Row {height="38%"}
+
+::: {.card title="Notes"}
+
+```{ojs}
+compareNotes = {
+  const notSold = compareLatest.rows
+    .filter((row) => !row.sold)
+    .map((row) => COUNTRY_NAMES[row.country]);
+  return html`<div class="cgp-notice">
+    ${notSold.length ? html`<div>Not sold: ${notSold.join(", ")}.</div>` : ""}
+    <div>Each country shows its own newest day with stations; an older day is marked stale.</div>
+    <div>Grades are not equivalent across countries: see the grade table on the About page.
+      UK and Australian diesel is premium diesel. Costco prices are not national averages.</div>
+  </div>`;
+}
+```
+
+:::
 
 # Trends
 
-_(the Trends page is built next.)_
+## Row {height="18%"}
+
+::: {.card title="Breakdown" padding="4px"}
+
+```{ojs}
+viewof trendCountry = Inputs.select(["All countries", ...COUNTRY_ORDER], {
+  label: "Breakdown",
+  format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
+})
+```
+
+```{ojs}
+viewof showBand = Inputs.toggle({label: "Show the p25–p75 band", value: true})
+```
+
+```{ojs}
+viewof trendRegions = {
+  const options = trendRegionOptions;
+  const input = Inputs.checkbox(
+    options.map((entry) => entry[0]),
+    {
+      label: "Regions",
+      value: options.slice(0, 8).map((entry) => entry[0]),
+      format: (code) => {
+        const found = options.find((entry) => entry[0] === code);
+        return `${code} (${found ? found[1] : 0})`;
+      }
+    }
+  );
+  if (!options.length) input.style.display = "none";
+  return input;
+}
+```
+
+:::
+
+## Row {height="82%"}
+
+::: {.card title="Price over time"}
+
+```{ojs}
+trendView = {
+  if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
+  if (trendCountry === "All countries") return currency === "USD" ? trendAllUsd : trendAllLocal;
+  return trendRegionPlot;
+}
+```
+
+:::
 
 # Station
 
-_(the Station page is built next.)_
+## Row {height="26%"}
+
+::: {.card title="Find a station" padding="4px"}
+
+```{ojs}
+viewof stationQuery = Inputs.search(stationsAll, {
+  placeholder: "Name, local name, city or region…",
+  columns: ["name", "name_local", "city", "region"],
+  label: "Search"
+})
+```
+
+```{ojs}
+stationResults = {
+  const buttons = stationQuery.slice(0, 40).map((row) => {
+    const suffix =
+      row.status === "active"
+        ? ""
+        : ` · last seen ${String(row.last_seen_utc || "").slice(0, 10)}`;
+    const button = html`<button type="button" data-station-key=${row.station_key}>${row.name}${
+      row.name_local ? ` (${row.name_local})` : ""
+    } — ${[row.city, row.region, row.country].filter((v) => v).join(", ")}${suffix}</button>`;
+    button.addEventListener("click", () => stationChannel.open(row.station_key));
+    return button;
+  });
+  if (!buttons.length) return html`<div class="cgp-notice">No station matches.</div>`;
+  return html`<div class="cgp-results">${buttons}</div>`;
+}
+```
+
+:::
+
+## Row {height="74%"}
+
+::: {.card title="Price history"}
+
+```{ojs}
+stationChart = {
+  if (!selectedStation) {
+    return html`<div class="cgp-notice cgp-station-chart">Search for a station, or open one from
+      the Map.</div>`;
+  }
+  if (!selectedMeta) {
+    return html`<div class="cgp-alert cgp-station-chart">Station not found: ${selectedStation}</div>`;
+  }
+  if (!db) {
+    return html`<div class="cgp-notice cgp-station-chart">Loading the price database…</div>`;
+  }
+  const pick = (row) =>
+    perVolume(currency === "USD" ? row.price_usd_per_litre : row.price_local_per_litre, volume);
+  const own = stationHistoryRows
+    .filter((row) => row.station_key === selectedMeta.station_key)
+    .map((row) => ({day: toDay(row.d), grade: row.grade, value: pick(row)}))
+    .filter((row) => row.value != null);
+  const neighbours = stationHistoryRows
+    .filter((row) => row.station_key !== selectedMeta.station_key && row.grade === grade)
+    .map((row) => ({day: toDay(row.d), key: row.station_key, value: pick(row)}))
+    .filter((row) => row.value != null);
+  const medians = stationMedianRows
+    .map((row) => ({
+      day: toDay(row.d),
+      value: perVolume(
+        currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+        volume
+      )
+    }))
+    .filter((row) => row.value != null);
+  if (!own.length && !medians.length) {
+    return html`<div class="cgp-notice cgp-station-chart">No history yet for
+      ${selectedMeta.name}.</div>`;
+  }
+  const medianLabel =
+    selectedMeta.region == null
+      ? `${COUNTRY_NAMES[selectedMeta.country]} median`
+      : `${selectedMeta.region} median`;
+  const entry = selectedLatest ? gradeEntry(selectedLatest, grade) : null;
+  const unit = currency === "USD" ? "USD" : entry ? entry.currency : "local";
+  const figure = Plot.plot({
+    height: 360,
+    marginRight: 80,
+    style: {background: "transparent", color: palette.text},
+    color: {
+      legend: true,
+      domain: ["regular", "premium", "diesel"],
+      range: [palette.ramp[0], palette.ramp[3], palette.ramp[2]]
+    },
+    x: {label: "Capture date (UTC)", grid: true},
+    y: {label: `${unit} ${volumeLabel}`, grid: true, nice: true},
+    marks: [
+      Plot.line(neighbours, {
+        x: "day",
+        y: "value",
+        z: "key",
+        stroke: palette.muted,
+        strokeOpacity: 0.35
+      }),
+      Plot.line(medians, {
+        x: "day",
+        y: "value",
+        stroke: palette.muted,
+        strokeDasharray: "4 3",
+        strokeWidth: 2
+      }),
+      Plot.text(medians.slice(-1), {
+        x: "day",
+        y: "value",
+        text: () => medianLabel,
+        dx: 6,
+        textAnchor: "start",
+        fill: palette.muted
+      }),
+      Plot.line(own, {x: "day", y: "value", z: "grade", stroke: "grade", strokeWidth: 2.5}),
+      Plot.dot(own, {
+        x: "day",
+        y: "value",
+        z: "grade",
+        fill: "grade",
+        r: 3,
+        title: (row) =>
+          `${row.grade} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.value, priceDigits)}`
+      })
+    ]
+  });
+  return html`<div class="cgp-station-chart">${figure}</div>`;
+}
+```
+
+:::
+
+::: {.card title="Station detail"}
+
+```{ojs}
+stationDetail = {
+  if (!selectedStation) return html`<div class="cgp-notice">Nothing selected.</div>`;
+  if (!selectedMeta) {
+    return html`<div class="cgp-alert">Station not found: ${selectedStation}</div>`;
+  }
+  const entries = selectedLatest
+    ? [
+        ...["regular", "premium", "diesel"]
+          .filter((key) => gradeEntry(selectedLatest, key))
+          .map((key) => [GRADE_LABELS[key], gradeEntry(selectedLatest, key)]),
+        ...Object.entries(selectedLatest.other || {})
+      ]
+    : [];
+  const rows = entries.map(
+    ([label, entry]) => html`<tr>
+      <td>${label}</td>
+      <td>${entry.price_raw} ${entry.price_unit}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(entry.price_local_per_litre, volume), priceDigits)}
+        ${entry.currency}${volumeShort}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(entry.price_usd_per_litre, volume), priceDigits)}
+        USD${volumeShort}</td>
+    </tr>`
+  );
+  const links = [];
+  if (selectedMeta.superseded_by) {
+    links.push(html`<div class="cgp-notice">Superseded by
+      <a href=${"?station=" + encodeURIComponent(selectedMeta.superseded_by) + "#station"}>${
+        selectedMeta.superseded_by
+      }</a>.</div>`);
+  }
+  for (const row of stationsAll.filter((s) => s.superseded_by === selectedMeta.station_key)) {
+    links.push(html`<div class="cgp-notice">Supersedes
+      <a href=${"?station=" + encodeURIComponent(row.station_key) + "#station"}>${
+        row.station_key
+      }</a>.</div>`);
+  }
+  const neighbours = nearestStations.map(
+    (row) => html`<li><a href=${"?station=" + encodeURIComponent(row.station_key) + "#station"}>${
+      row.name
+    }</a> <span class="cgp-stale">${row.km.toFixed(0)} km</span></li>`
+  );
+  return html`<div>
+    <div class="cgp-popup-title">${selectedMeta.name}${
+      selectedMeta.name_local
+        ? html` <span class="cgp-local">${selectedMeta.name_local}</span>`
+        : ""
+    }</div>
+    <div class="cgp-popup-place">${[
+      selectedMeta.city,
+      selectedMeta.region,
+      COUNTRY_NAMES[selectedMeta.country]
+    ]
+      .filter((v) => v)
+      .join(", ")} · ${selectedMeta.station_key}</div>
+    <table class="cgp-table">
+      <thead><tr><th>Grade</th><th>As published</th>
+        <th class="cgp-num">Local</th><th class="cgp-num">USD</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="cgp-notice">First seen ${String(selectedMeta.first_seen_utc || "").slice(0, 10)},
+      last seen ${String(selectedMeta.last_seen_utc || "").slice(0, 10)},
+      status ${selectedMeta.status}.</div>
+    ${links}
+    <div class="cgp-notice">Nearest active stations:</div>
+    <ul class="cgp-notice">${neighbours}</ul>
+  </div>`;
+}
+```
+
+:::
 
 # About
 
-_(the About page is built next.)_
+## Row
+
+::: {.card title="What this is"}
+
+```{ojs}
+aboutHeader = html`<div>
+  <p>${meta.notice}</p>
+  <p class="cgp-notice">Built ${meta.built_at_utc} from capture ${meta.capture_id}.
+    Data: <a href=${meta.releases.current}>current release</a> ·
+    <a href=${meta.releases.all}>all releases</a> ·
+    <a href="https://github.com/coatless-dashboard/costco-gas-prices#schema-capture-grain-in-file-order">column
+    reference</a>.</p>
+</div>`
+```
+
+Prices are read from Costco's own public websites four times a day and stored by
+UTC day. Every row keeps the published value, the unit it was published in, and
+the exchange rate in force when it was collected, so a past day always shows the
+USD value of that day.
+
+| Country | Endpoint, one request unless noted |
+|---|---|
+| United States | `ecom-api.costco.com/core/warehouse-locator/v1/warehouses.json` for metadata, then `www.costco.com/AjaxGetGasPricesService?warehouseid=…` in batches of 10 |
+| Canada | `www.costco.ca/AjaxWarehouseBrowseLookupView?hasGas=true&populateWarehouseDetails=true&countryCode=CA` |
+| Mexico | `www.costco.com.mx/rest/v2/mexico/stores?fields=FULL&…` |
+| United Kingdom | `www.costco.co.uk/rest/v2/uk/stores?fields=FULL&…` |
+| Australia | `www.costco.com.au/rest/v2/australia/stores?fields=FULL&…` |
+| Japan | `www.costco.co.jp/rest/v2/japan/stores?fields=FULL&…` |
+| Taiwan | `www.costco.com.tw/rest/v2/taiwan/stores?fields=FULL&…` |
+
+:::
+
+::: {.card title="Grades"}
+
+```{ojs}
+aboutGrades = html`<table class="cgp-table">
+  <thead><tr><th>Country</th><th>Source label</th><th>Grade</th><th>Spec</th>
+    <th>Stated by</th></tr></thead>
+  <tbody>${(meta.grades || []).map(
+    (row) => html`<tr>
+      <td>${COUNTRY_NAMES[row.country] || row.country}</td>
+      <td>${row.grade_raw}</td>
+      <td>${row.grade}</td>
+      <td>${row.spec || "—"}</td>
+      <td>${
+        row.spec_source
+          ? row.spec_source_url
+            ? html`<a href=${row.spec_source_url}>${row.spec_source}</a>`
+            : row.spec_source
+          : "—"
+      }</td>
+    </tr>`
+  )}</tbody>
+</table>`
+```
+
+Grades are not equivalent across countries. Where a source states no octane or
+blend the specification is blank; where it comes from a third party it is marked
+`reported` and links to that source.
+
+:::
+
+## Row
+
+::: {.card title="Units, rates and caveats"}
+
+**Units.** One US gallon is 3.785411784 litres. UK prices are published in
+pence, so `GBp/L` is divided by 100 for the pound figure. Puerto Rico's prices
+are published in USD per litre: #335 regular was 1.097, about 4.15 per gallon,
+and Puerto Rico retail is priced per litre. That unit is inferred, not stated.
+
+**Exchange rates.** Each capture fetches the daily reference rate from
+Frankfurter v2 and stores it with every row. If that fails, a dated
+`@fawazahmed0/currency-api` file is used; if that also fails, the most recent
+stored rate within 7 days is carried forward and labelled
+`carried-forward:<source>`. If no rate is available the USD columns are null:
+those stations are drawn grey on the map, show their local price only, and are
+left out of USD aggregates.
+
+**Filtering.** Placeholder prices are dropped: stations that price before they
+open (the pre-opening 3.999 / 5.999 pattern in the United States, and Canadian
+warehouses with no gas hours), premium-only business-centre placeholders, and
+values outside per-unit sanity bounds.
+
+**UTC days versus local time.** Days are UTC days. For Japan, Taiwan and
+Australia the last capture of a UTC day arrives early the next local morning, so
+`local_date` in the released rows can be a day ahead of `capture_date`.
+
+**Known limits.** No source publishes a price timestamp, prices change during
+the day, and the storefront APIs declare CDN caching of up to 90 minutes. Costco
+prices are not national averages.
+
+:::
+
+::: {.card title="Attribution"}
+
+```{ojs}
+aboutAttribution = {
+  const span = document.createElement("span");
+  span.innerHTML = meta.basemap.attribution;
+  return html`<div class="cgp-notice">Basemap: ${meta.basemap.provider}. ${span}</div>`;
+}
+```
+
+Code is MIT licensed. The data files carry no licence claim and include the
+notice above.
+
+:::
