@@ -666,179 +666,6 @@ trendRegionOptions = {
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
 }
-
-trendAllUsd = {
-  const data = trendCountryRows
-    .filter((row) => row.median_usd_per_litre != null)
-    .map((row) => ({
-      country: row.country,
-      name: COUNTRY_NAMES[row.country],
-      day: toDay(row.d),
-      median: perVolume(row.median_usd_per_litre, volume),
-      p25: perVolume(row.p25_usd_per_litre, volume),
-      p75: perVolume(row.p75_usd_per_litre, volume)
-    }));
-  if (!data.length) {
-    return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
-  }
-  const lastDay = Math.max(...data.map((row) => row.day.getTime()));
-  const marks = [];
-  if (showBand) {
-    marks.push(
-      Plot.areaY(data, {
-        x: "day",
-        y1: "p25",
-        y2: "p75",
-        z: "country",
-        fill: (row) => COUNTRY_COLORS[row.country],
-        fillOpacity: 0.14
-      })
-    );
-  }
-  marks.push(
-    Plot.line(data, {
-      x: "day",
-      y: "median",
-      z: "country",
-      stroke: (row) => COUNTRY_COLORS[row.country],
-      strokeWidth: 2
-    }),
-    Plot.dot(data, {
-      x: "day",
-      y: "median",
-      r: 2,
-      fill: (row) => COUNTRY_COLORS[row.country],
-      title: (row) =>
-        `${row.name} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)} USD`
-    }),
-    Plot.text(
-      data.filter((row) => row.day.getTime() === lastDay),
-      {x: "day", y: "median", text: "country", dx: 14, fill: (row) => COUNTRY_COLORS[row.country]}
-    )
-  );
-  return Plot.plot({
-    height: 420,
-    marginRight: 60,
-    style: {background: "transparent", color: palette.text},
-    x: {label: "Capture date (UTC)", grid: true},
-    y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
-    marks
-  });
-}
-
-trendAllLocal = {
-  const byCountry = new Map();
-  for (const row of trendCountryRows) {
-    if (row.median_local_per_litre == null) continue;
-    if (!byCountry.has(row.country)) byCountry.set(row.country, []);
-    byCountry.get(row.country).push({
-      day: toDay(row.d),
-      median: perVolume(row.median_local_per_litre, volume),
-      p25: perVolume(row.p25_local_per_litre, volume),
-      p75: perVolume(row.p75_local_per_litre, volume)
-    });
-  }
-  const panels = COUNTRY_ORDER.filter((code) => byCountry.has(code)).map((code) => {
-    const rows = byCountry.get(code);
-    const marks = [];
-    if (showBand) {
-      marks.push(
-        Plot.areaY(rows, {
-          x: "day",
-          y1: "p25",
-          y2: "p75",
-          fill: COUNTRY_COLORS[code],
-          fillOpacity: 0.16
-        })
-      );
-    }
-    marks.push(
-      Plot.line(rows, {x: "day", y: "median", stroke: COUNTRY_COLORS[code], strokeWidth: 2}),
-      Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]})
-    );
-    const figure = Plot.plot({
-      height: 190,
-      marginLeft: 52,
-      style: {background: "transparent", color: palette.text},
-      x: {label: null, ticks: 4, grid: true},
-      y: {label: `${currencyOf.get(code) || ""} ${volumeShort}`, grid: true, nice: true},
-      marks
-    });
-    return html`<div><div class="cgp-stale">${COUNTRY_NAMES[code]}</div>${figure}</div>`;
-  });
-  if (!panels.length) {
-    return html`<div class="cgp-notice">No local values for ${GRADE_LABELS[grade]}.</div>`;
-  }
-  return html`<div class="cgp-small-multiples">${panels}</div>`;
-}
-
-trendRegionPlot = {
-  const unit = currency === "USD" ? "USD" : currencyOf.get(trendCountry) || "local";
-  if (!trendRegionOptions.length) {
-    const rows = trendCountryRows
-      .filter((row) => row.country === trendCountry)
-      .map((row) => ({
-        day: toDay(row.d),
-        median: perVolume(
-          currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
-          volume
-        )
-      }))
-      .filter((row) => row.median != null);
-    const figure = Plot.plot({
-      height: 400,
-      style: {background: "transparent", color: palette.text},
-      x: {label: "Capture date (UTC)", grid: true},
-      y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
-      marks: [
-        Plot.line(rows, {
-          x: "day",
-          y: "median",
-          stroke: COUNTRY_COLORS[trendCountry],
-          strokeWidth: 2
-        }),
-        Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[trendCountry]})
-      ]
-    });
-    return html`<div>
-      <div class="cgp-notice">No regional breakdown for ${COUNTRY_NAMES[trendCountry]};
-        showing the national series.</div>
-      ${figure}
-    </div>`;
-  }
-  const chosen = new Set(trendRegions);
-  const data = trendRegionRows
-    .filter((row) => chosen.has(row.region))
-    .map((row) => ({
-      region: row.region,
-      day: toDay(row.d),
-      median: perVolume(
-        currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
-        volume
-      )
-    }))
-    .filter((row) => row.median != null);
-  if (!data.length) return html`<div class="cgp-notice">Pick at least one region.</div>`;
-  return Plot.plot({
-    height: 420,
-    marginRight: 80,
-    style: {background: "transparent", color: palette.text},
-    color: {legend: true, scheme: "observable10"},
-    x: {label: "Capture date (UTC)", grid: true},
-    y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
-    marks: [
-      Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
-      Plot.dot(data, {
-        x: "day",
-        y: "median",
-        r: 2,
-        fill: "region",
-        title: (row) =>
-          `${row.region} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)}`
-      })
-    ]
-  });
-}
 ```
 
 ```{ojs}
@@ -1138,10 +965,201 @@ viewof trendRegions = {
 ::: {.card title="Price over time"}
 
 ```{ojs}
+// Every chart on this page is built here, in the card that shows it, the
+// way the Map and Station cards build theirs. Two separate mechanisms
+// require it. An OJS cell's node is inserted where the cell is defined, so
+// a chart built in the hidden `output: false` chunk above is adopted by
+// that chunk and this card stays empty. And Quarto's dashboard autosizing
+// rewrites every `Plot.plot` call to take the width and height of the cell
+// the call appears in, so a chart built in that hidden chunk is measured
+// against a container that is never visible and comes out 0 px wide.
 trendView = {
+  function allCountriesUsd() {
+    const data = trendCountryRows
+      .filter((row) => row.median_usd_per_litre != null)
+      .map((row) => ({
+        country: row.country,
+        name: COUNTRY_NAMES[row.country],
+        day: toDay(row.d),
+        median: perVolume(row.median_usd_per_litre, volume),
+        p25: perVolume(row.p25_usd_per_litre, volume),
+        p75: perVolume(row.p75_usd_per_litre, volume)
+      }));
+    if (!data.length) {
+      return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
+    }
+    const lastDay = Math.max(...data.map((row) => row.day.getTime()));
+    const marks = [];
+    if (showBand) {
+      marks.push(
+        Plot.areaY(data, {
+          x: "day",
+          y1: "p25",
+          y2: "p75",
+          z: "country",
+          fill: (row) => COUNTRY_COLORS[row.country],
+          fillOpacity: 0.14
+        })
+      );
+    }
+    marks.push(
+      Plot.line(data, {
+        x: "day",
+        y: "median",
+        z: "country",
+        stroke: (row) => COUNTRY_COLORS[row.country],
+        strokeWidth: 2
+      }),
+      Plot.dot(data, {
+        x: "day",
+        y: "median",
+        r: 2,
+        fill: (row) => COUNTRY_COLORS[row.country],
+        title: (row) =>
+          `${row.name} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)} USD`
+      }),
+      Plot.text(
+        data.filter((row) => row.day.getTime() === lastDay),
+        {x: "day", y: "median", text: "country", dx: 14, fill: (row) => COUNTRY_COLORS[row.country]}
+      )
+    );
+    return Plot.plot({
+      height: 420,
+      marginRight: 60,
+      style: {background: "transparent", color: palette.text},
+      x: {label: "Capture date (UTC)", grid: true},
+      y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
+      marks
+    });
+  }
+
+  function allCountriesLocal() {
+    const byCountry = new Map();
+    for (const row of trendCountryRows) {
+      if (row.median_local_per_litre == null) continue;
+      if (!byCountry.has(row.country)) byCountry.set(row.country, []);
+      byCountry.get(row.country).push({
+        day: toDay(row.d),
+        median: perVolume(row.median_local_per_litre, volume),
+        p25: perVolume(row.p25_local_per_litre, volume),
+        p75: perVolume(row.p75_local_per_litre, volume)
+      });
+    }
+    const panels = COUNTRY_ORDER.filter((code) => byCountry.has(code)).map((code) => {
+      const rows = byCountry.get(code);
+      const marks = [];
+      if (showBand) {
+        marks.push(
+          Plot.areaY(rows, {
+            x: "day",
+            y1: "p25",
+            y2: "p75",
+            fill: COUNTRY_COLORS[code],
+            fillOpacity: 0.16
+          })
+        );
+      }
+      marks.push(
+        Plot.line(rows, {x: "day", y: "median", stroke: COUNTRY_COLORS[code], strokeWidth: 2}),
+        Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]})
+      );
+      const figure = Plot.plot({
+        // A panel, not the card: without an explicit width Quarto's autosizing
+        // gives every one of these the full card width, and the
+        // `.cgp-small-multiples` grid (columns of at least 240 px) collapses
+        // to a single column. An explicit width wins because the injected one
+        // is prepended to this object.
+        width: 240,
+        height: 190,
+        marginLeft: 52,
+        style: {background: "transparent", color: palette.text},
+        x: {label: null, ticks: 4, grid: true},
+        y: {label: `${currencyOf.get(code) || ""} ${volumeShort}`, grid: true, nice: true},
+        marks
+      });
+      return html`<div><div class="cgp-stale">${COUNTRY_NAMES[code]}</div>${figure}</div>`;
+    });
+    if (!panels.length) {
+      return html`<div class="cgp-notice">No local values for ${GRADE_LABELS[grade]}.</div>`;
+    }
+    return html`<div class="cgp-small-multiples">${panels}</div>`;
+  }
+
+  function regionBreakdown() {
+    const unit = currency === "USD" ? "USD" : currencyOf.get(trendCountry) || "local";
+    if (!trendRegionOptions.length) {
+      const rows = trendCountryRows
+        .filter((row) => row.country === trendCountry)
+        .map((row) => ({
+          day: toDay(row.d),
+          median: perVolume(
+            currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+            volume
+          )
+        }))
+        .filter((row) => row.median != null);
+      const figure = Plot.plot({
+        height: 400,
+        style: {background: "transparent", color: palette.text},
+        x: {label: "Capture date (UTC)", grid: true},
+        y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
+        marks: [
+          Plot.line(rows, {
+            x: "day",
+            y: "median",
+            stroke: COUNTRY_COLORS[trendCountry],
+            strokeWidth: 2
+          }),
+          Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[trendCountry]})
+        ]
+      });
+      return html`<div>
+        <div class="cgp-notice">No regional breakdown for ${COUNTRY_NAMES[trendCountry]};
+          showing the national series.</div>
+        ${figure}
+      </div>`;
+    }
+    const chosen = new Set(trendRegions);
+    const data = trendRegionRows
+      .filter((row) => chosen.has(row.region))
+      .map((row) => ({
+        region: row.region,
+        day: toDay(row.d),
+        median: perVolume(
+          currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+          volume
+        )
+      }))
+      .filter((row) => row.median != null);
+    if (!data.length) return html`<div class="cgp-notice">Pick at least one region.</div>`;
+    return Plot.plot({
+      height: 420,
+      marginRight: 80,
+      style: {background: "transparent", color: palette.text},
+      // Quarto's OJS stdlib pins Plot 0.6.11, which has no `observable10`
+      // ordinal scheme: naming it throws and turns the whole cell into an error.
+      color: {legend: true, scheme: "tableau10"},
+      x: {label: "Capture date (UTC)", grid: true},
+      y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
+      marks: [
+        Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
+        Plot.dot(data, {
+          x: "day",
+          y: "median",
+          r: 2,
+          fill: "region",
+          title: (row) =>
+            `${row.region} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)}`
+        })
+      ]
+    });
+  }
+
   if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
-  if (trendCountry === "All countries") return currency === "USD" ? trendAllUsd : trendAllLocal;
-  return trendRegionPlot;
+  if (trendCountry === "All countries") {
+    return currency === "USD" ? allCountriesUsd() : allCountriesLocal();
+  }
+  return regionBreakdown();
 }
 ```
 

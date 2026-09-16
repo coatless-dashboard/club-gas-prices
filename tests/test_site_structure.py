@@ -100,3 +100,34 @@ def test_station_selection_uses_the_query_string():
 def test_station_history_is_always_filtered_by_station_key():
     for match in re.finditer(r"FROM history\b(.*?)`", read_qmd(), re.S):
         assert "WHERE station_key IN (" in match.group(1)
+
+
+def ojs_chunks() -> list[str]:
+    """The body of every ```{ojs} chunk, in document order."""
+    return re.findall(r"^```\{ojs\}\n(.*?)^```$", read_qmd(), re.S | re.M)
+
+
+def test_no_chart_is_built_in_a_hidden_chunk():
+    """Every `Plot.plot` call belongs to the card that shows its chart.
+
+    Two mechanisms punish a chart built in an `output: false` chunk, and
+    neither one reports an error. An OJS cell's node is inserted where the cell
+    is defined, so the hidden chunk adopts the chart and the card that returned
+    it stays empty. And Quarto's dashboard autosizing rewrites every
+    `Plot.plot` call to take the width and height of the cell the call appears
+    in, so a chart built in a hidden chunk is measured against a container that
+    is never visible and comes out zero pixels wide.
+    """
+    hidden = [c for c in ojs_chunks() if c.lstrip().startswith("//| output: false")]
+    assert len(hidden) >= 4  # the chunk split works, so the loop below is not vacuous
+    for chunk in hidden:
+        first = chunk.strip().splitlines()[1][:60]
+        assert "Plot.plot(" not in chunk, f"hidden chunk builds a chart: {first}"
+
+
+def test_no_plot_scheme_the_pinned_plot_build_does_not_know():
+    # Quarto's OJS stdlib pins @observablehq/plot 0.6.11, whose ordinal schemes
+    # do not include "observable10": naming it throws `unknown ordinal scheme`
+    # and turns the whole cell into an error box. A scheme is always a string
+    # literal, so the page may still say the name in a comment.
+    assert '"observable10"' not in read_qmd()

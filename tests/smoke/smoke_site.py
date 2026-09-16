@@ -31,6 +31,11 @@ CURRENCIES = ["USD", "Local"]
 VOLUMES = ["gal", "litre"]
 IDLE_TIMEOUT_MS = 60_000
 
+# The marks Observable Plot draws only when the page has rows: one dot per
+# country on Compare's median chart, one line per country on the Trends chart.
+COMPARE_DOTS = '#compare svg g[aria-label="dot"] circle'
+TREND_LINES = '#trends svg g[aria-label="line"] path'
+
 TILE_HOSTS = ("basemaps.cartocdn.com", "tile.openstreetmap.org")
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 # The page's libraries come from these two, so they are never intercepted.
@@ -77,6 +82,23 @@ def expected_marker_count(latest: list[dict], grade: str) -> int:
         if (station.get("grades") or {}).get(grade):
             total += 1
     return total
+
+
+def expected_usd_countries(latest: list[dict], grade: str) -> int:
+    """Countries Compare and Trends should draw in USD for `grade`.
+
+    Both pages read `summary_daily`, which the smoke test cannot query, but a
+    country has a USD median there exactly when at least one of its stations
+    carries a USD value for the grade -- which `latest.json` does record. A
+    country with no rate for its currency has no USD value anywhere and is
+    absent from both pages, so it must not be counted here either.
+    """
+    countries = set()
+    for station in latest:
+        entry = (station.get("grades") or {}).get(grade) or {}
+        if entry.get("price_usd_per_litre") is not None:
+            countries.add(station.get("country"))
+    return len(countries)
 
 
 def is_site_console_error(message_type: str, location_url: str, origin: str) -> bool:
@@ -175,6 +197,33 @@ def map_check(page, failures: Failures, step: str, latest: list[dict], grade: st
         print(f"{step}: map ok, {drawn} markers of {expected} {grade} stations", flush=True)
 
 
+def plot_check(
+    page, failures: Failures, step: str, selector: str, expected: int, what: str
+) -> None:
+    """Assert a page drew its data, not just a card with a heading in it.
+
+    `selector` names a mark Observable Plot only emits for real rows, so an
+    empty page -- no data, a cell that threw, or output that never reached the
+    card it belongs to -- cannot pass. The wait is `state="visible"`, not
+    `attached`: a chart Quarto's dashboard autosizing measured against a hidden
+    container is in the DOM, with every mark the data calls for, inside an SVG
+    zero pixels wide. `wait_idle` has already seen every OJS cell finish and
+    this waits up to 60 s more, so the count below cannot race the render.
+    Like the Map check it allows 90%, because a country whose currency has no
+    rate that day legitimately has no USD value to draw.
+    """
+    try:
+        page.wait_for_selector(selector, timeout=IDLE_TIMEOUT_MS, state="visible")
+    except Exception as exc:
+        failures.add(f"{step}: no {what} were drawn ({type(exc).__name__}): {selector}")
+        return
+    drawn = page.locator(selector).count()
+    if drawn < 0.9 * expected:
+        failures.add(f"{step}: {drawn} {what}, expected at least 90% of {expected}")
+    else:
+        print(f"{step}: ok, {drawn} {what} of {expected} countries", flush=True)
+
+
 def set_control(page, name: str, value: str) -> None:
     page.locator(f'[data-control="{name}"] input[data-value="{value}"]').first.check()
 
@@ -237,11 +286,19 @@ def main() -> int:
             map_check(page, failures, "step 1", latest, "regular")
             check_clean(page, failures, "step 1", collected)
 
-            # Step 2: visit every page.
+            # Step 2: visit every page. Compare and Trends are checked for
+            # content as well: navigation and the absence of an error cell say
+            # nothing about whether either page drew anything at all, and a
+            # completely empty card is exactly what this is the only gate on.
+            countries = expected_usd_countries(latest, "regular")
             for page_id in PAGE_IDS:
                 page.locator(f'a.nav-link[href="#{page_id}"]').first.click()
                 page.wait_for_selector(f"#{page_id}.tab-pane.active", timeout=10_000)
                 wait_idle(page, failures, f"step 2 {page_id}")
+                if page_id == "compare":
+                    plot_check(page, failures, "step 2 compare", COMPARE_DOTS, countries, "dots")
+                elif page_id == "trends":
+                    plot_check(page, failures, "step 2 trends", TREND_LINES, countries, "lines")
                 check_clean(page, failures, f"step 2 {page_id}", collected)
 
             # Step 3: exercise every control value, then re-check the Map.
