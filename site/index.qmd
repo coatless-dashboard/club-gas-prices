@@ -1,0 +1,350 @@
+---
+title: "Costco Gas Prices"
+description: "Posted fuel prices at Costco gas stations in seven countries."
+format:
+  dashboard:
+    orientation: rows
+    scrolling: false
+    respect-user-color-scheme: true
+    theme:
+      light: [default, custom.scss]
+      dark: [default, custom.scss, dark.scss]
+    nav-buttons:
+      - icon: github
+        href: https://github.com/coatless-dashboard/costco-gas-prices
+        aria-label: "Source repository on GitHub"
+      - icon: database
+        href: https://github.com/coatless-dashboard/costco-gas-prices/releases/tag/current
+        aria-label: "Download the data"
+execute:
+  echo: false
+---
+
+# {.sidebar}
+
+```{ojs}
+//| output: false
+LITRES_PER_GALLON = 3.785411784
+
+COUNTRY_ORDER = ["US", "CA", "MX", "GB", "AU", "JP", "TW"]
+
+// `X = ({...})` makes Quarto's OJS cell splitter swallow the rest of the
+// chunk, silently: every later cell in it goes undefined. Objects are
+// returned from a block cell instead.
+COUNTRY_NAMES = {
+  return {
+    US: "United States",
+    CA: "Canada",
+    MX: "Mexico",
+    GB: "United Kingdom",
+    AU: "Australia",
+    JP: "Japan",
+    TW: "Taiwan"
+  };
+}
+
+// Okabe-Ito, which stays distinguishable for the common colour-vision
+// deficiencies. TW takes a brown in place of Okabe-Ito yellow, which is
+// illegible on a light background.
+COUNTRY_COLORS = {
+  return {
+    US: "#0072B2",
+    CA: "#E69F00",
+    MX: "#009E73",
+    GB: "#CC79A7",
+    AU: "#56B4E9",
+    JP: "#D55E00",
+    TW: "#8C6D31"
+  };
+}
+
+GRADE_LABELS = {
+  return {regular: "Regular", premium: "Premium", diesel: "Diesel"};
+}
+
+meta = FileAttachment("data/meta.json").json()
+
+latest = FileAttachment("data/latest.json").json()
+
+stationsAll = FileAttachment("data/stations.json").json()
+```
+
+```{ojs}
+//| output: false
+// Quarto sets `quarto-dark` on <body> when the dark theme is active.
+theme = Generators.observe((notify) => {
+  const body = document.body;
+  const read = () => (body.classList.contains("quarto-dark") ? "dark" : "light");
+  notify(read());
+  const observer = new MutationObserver(() => notify(read()));
+  observer.observe(body, {attributes: true, attributeFilter: ["class"]});
+  return () => observer.disconnect();
+})
+
+palette = {
+  theme; // re-read the tokens whenever the theme flips
+  const style = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => {
+    const value = style.getPropertyValue(name);
+    return value && value.trim() ? value.trim() : fallback;
+  };
+  return {
+    ramp: [
+      read("--cgp-ramp-1", "#2a6f97"),
+      read("--cgp-ramp-2", "#61a5c2"),
+      read("--cgp-ramp-3", "#e9c46a"),
+      read("--cgp-ramp-4", "#e76f51"),
+      read("--cgp-ramp-5", "#b3261e")
+    ],
+    missing: read("--cgp-missing", "#9aa0a6"),
+    stroke: read("--cgp-marker-stroke", "#ffffff"),
+    muted: read("--cgp-muted", "#5b6770"),
+    grid: read("--cgp-grid", "rgba(27,31,35,0.12)"),
+    text: read("--bs-body-color", "#1b1f23")
+  };
+}
+
+// Every OJS cell runs at page load, so DuckDB-WASM would download on the Map
+// page too. `dbWanted` stays false until a page that needs SQL is shown.
+dbWanted = Generators.observe((notify) => {
+  const panes = ["compare", "trends", "station"]
+    .map((id) => document.getElementById(id))
+    .filter((el) => el);
+  const anyActive = () => panes.some((el) => el.classList.contains("active"));
+  if (new URLSearchParams(location.search).has("station") || anyActive()) {
+    notify(true);
+    return () => {};
+  }
+  notify(false);
+  const observer = new MutationObserver(() => {
+    if (anyActive()) {
+      notify(true);
+      observer.disconnect();
+    }
+  });
+  for (const pane of panes) {
+    observer.observe(pane, {attributes: true, attributeFilter: ["class"]});
+  }
+  return () => observer.disconnect();
+})
+
+// The one and only DuckDBClient.of call on the page.
+db = dbWanted
+  ? DuckDBClient.of({
+      summary_daily: FileAttachment("data/summary_daily.parquet"),
+      history: FileAttachment("data/history.parquet")
+    })
+  : null
+
+nowTick = Generators.observe((notify) => {
+  notify(new Date());
+  const timer = setInterval(() => notify(new Date()), 60000);
+  return () => clearInterval(timer);
+})
+```
+
+```{ojs}
+//| output: false
+function radioControl(name, entries, value, label) {
+  const keys = entries.map((entry) => entry[1]);
+  const input = Inputs.radio(new Map(entries), {label, value});
+  input.setAttribute("data-control", name);
+  // Stable hooks for the smoke test: Observable Inputs give the radios no
+  // value attribute of their own.
+  input.querySelectorAll("input[type=radio]").forEach((el, i) => {
+    el.setAttribute("data-value", keys[i]);
+  });
+  return input;
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function perVolume(valuePerLitre, vol) {
+  if (valuePerLitre == null || !isFinite(valuePerLitre)) return null;
+  return vol === "gal" ? valuePerLitre * LITRES_PER_GALLON : valuePerLitre;
+}
+
+function fmtNumber(value, digits) {
+  return value == null || !isFinite(value) ? "—" : value.toFixed(digits);
+}
+
+function gradeEntry(station, key) {
+  return station && station.grades ? station.grades[key] || null : null;
+}
+
+function stationPrice(station, key, cur, vol) {
+  const entry = gradeEntry(station, key);
+  if (!entry) return null;
+  const perLitre = cur === "USD" ? entry.price_usd_per_litre : entry.price_local_per_litre;
+  return perVolume(perLitre, vol);
+}
+
+function quantileSorted(sorted, p) {
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const h = (sorted.length - 1) * p;
+  const lo = Math.floor(h);
+  const hi = Math.ceil(h);
+  return sorted[lo] + (h - lo) * (sorted[hi] - sorted[lo]);
+}
+
+function colorForFraction(t, pal) {
+  if (t == null || !isFinite(t)) return pal.missing;
+  const index = Math.min(pal.ramp.length - 1, Math.max(0, Math.floor(t * pal.ramp.length)));
+  return pal.ramp[index];
+}
+
+function hoursAgo(iso, now) {
+  if (!iso) return null;
+  const then = new Date(iso);
+  if (isNaN(then)) return null;
+  return (now.getTime() - then.getTime()) / 3600000;
+}
+
+function captureIdToDate(captureId) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})Z$/.exec(captureId || "");
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+}
+
+function toDay(value) {
+  return new Date(value + "T00:00:00Z");
+}
+
+function sqlList(values) {
+  return values.map((v) => "'" + String(v).replace(/'/g, "''") + "'").join(", ");
+}
+
+function sqlText(value) {
+  return "'" + String(value).replace(/'/g, "''") + "'";
+}
+
+function haversineKm(aLat, aLon, bLat, bLon) {
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+```
+
+```{ojs}
+viewof grade = radioControl(
+  "grade",
+  [["Regular", "regular"], ["Premium", "premium"], ["Diesel", "diesel"]],
+  "regular",
+  "Grade"
+)
+```
+
+```{ojs}
+viewof currency = radioControl(
+  "currency",
+  [["USD", "USD"], ["Local", "Local"]],
+  "USD",
+  "Currency"
+)
+```
+
+```{ojs}
+viewof volume = radioControl(
+  "volume",
+  [["per US gallon", "gal"], ["per litre", "litre"]],
+  "gal",
+  "Volume"
+)
+```
+
+```{ojs}
+//| output: false
+volumeLabel = volume === "gal" ? "per US gallon" : "per litre"
+
+volumeShort = volume === "gal" ? "/gal" : "/L"
+
+priceDigits = volume === "gal" ? 3 : 4
+
+currencyOf = {
+  const map = new Map();
+  for (const station of latest) {
+    const entry =
+      gradeEntry(station, "regular") ||
+      gradeEntry(station, "premium") ||
+      gradeEntry(station, "diesel");
+    if (entry && !map.has(station.country)) map.set(station.country, entry.currency);
+  }
+  return map;
+}
+
+// `costco-gas site-data` writes the staleness window into meta.json; 12 hours
+// is used only if that key is missing or unusable.
+staleAfterHours = {
+  const value = Number(meta.stale_after_hours);
+  return Number.isFinite(value) && value > 0 ? value : 12;
+}
+```
+
+```{ojs}
+freshnessNotice = {
+  const now = nowTick;
+  const items = [];
+  const builtAge = hoursAgo(meta.built_at_utc, now);
+  if (builtAge != null && builtAge > staleAfterHours) {
+    items.push(`This dashboard has not updated since ${meta.built_at_utc}.`);
+  }
+  const stale = [];
+  for (const code of COUNTRY_ORDER) {
+    const entry = meta.countries ? meta.countries[code] : null;
+    if (!entry) continue;
+    const when = captureIdToDate(entry.last_success_capture_id);
+    if (!when) {
+      stale.push(`${COUNTRY_NAMES[code]} (never)`);
+      continue;
+    }
+    const age = (now.getTime() - when.getTime()) / 3600000;
+    if (age > staleAfterHours) stale.push(`${COUNTRY_NAMES[code]} (${Math.floor(age)} h)`);
+  }
+  if (stale.length) {
+    items.push(
+      `Last successful capture over ${staleAfterHours} h ago: ${stale.join(", ")}.`
+    );
+  }
+  if (!items.length) {
+    return html`<div class="cgp-notice">Every country was captured in the last
+      ${staleAfterHours} hours.</div>`;
+  }
+  return html`<div class="cgp-alert">${items.map((text) => html`<div>${text}</div>`)}</div>`;
+}
+```
+
+```{ojs}
+html`<div class="cgp-notice cgp-sidebar-section">${meta.notice}</div>`
+```
+
+# Map
+
+_(the Map page is built next.)_
+
+# Compare
+
+_(the Compare page is built next.)_
+
+# Trends
+
+_(the Trends page is built next.)_
+
+# Station
+
+_(the Station page is built next.)_
+
+# About
+
+_(the About page is built next.)_

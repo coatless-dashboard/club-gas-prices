@@ -1,0 +1,54 @@
+/*-- scss:defaults --*/
+
+$body-bg: #14171a !default;
+$body-color: #e6e9ec !default;
+$link-color: #7fc2d8 !default;
+$card-bg: #1b1f24 !default;
+$card-border-color: rgba(230, 233, 236, 0.16) !default;
+$navbar-bg: #0c1c23 !default;
+$navbar-fg: #e6e9ec !default;
+
+/*-- scss:rules --*/
+
+// Same hue order as light mode, lifted so the markers stay visible on a dark map.
+:root {
+  --cgp-ramp-1: #6cb6d9;
+  --cgp-ramp-2: #9ecae1;
+  --cgp-ramp-3: #f2cc60;
+  --cgp-ramp-4: #f08a60;
+  --cgp-ramp-5: #e05545;
+  --cgp-missing: #8b9196;
+  --cgp-marker-stroke: #14171a;
+  --cgp-grid: rgba(230, 233, 236, 0.18);
+  --cgp-muted: #9aa4ad;
+}
+
+// OpenStreetMap ships no dark raster style, so invert the tiles and rotate the
+// hue back. Applied only when meta.json says the provider needs it.
+.cgp-map.cgp-tiles-invert .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.7);
+}
+
+.leaflet-container {
+  background: #1b1f24;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #1b1f24;
+  color: #e6e9ec;
+}
+
+.leaflet-control-attribution {
+  background: rgba(20, 23, 26, 0.8) !important;
+  color: #9aa4ad !important;
+}
+
+.leaflet-control-attribution a {
+  color: #7fc2d8 !important;
+}
+
+.cgp-results button:hover,
+.cgp-results button:focus-visible {
+  background: rgba(127, 194, 216, 0.16);
+}

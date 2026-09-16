@@ -1,0 +1,174 @@
+/*-- scss:defaults --*/
+
+$font-family-sans-serif: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+  Arial, "Noto Sans JP", "Noto Sans TC", sans-serif !default;
+$font-size-root: 15px !default;
+$primary: #1f6f8b !default;
+$body-bg: #fbfbfa !default;
+$body-color: #1b1f23 !default;
+$link-color: #145c73 !default;
+$card-border-color: rgba(27, 31, 35, 0.12) !default;
+$navbar-bg: #12333f !default;
+$navbar-fg: #f4f7f8 !default;
+
+/*-- scss:rules --*/
+
+// Price ramp: blue (cheap) to red (dear). Blue/orange/red stay distinguishable
+// for deuteranopia and protanopia; no green is used.
+:root {
+  --cgp-ramp-1: #2a6f97;
+  --cgp-ramp-2: #61a5c2;
+  --cgp-ramp-3: #e9c46a;
+  --cgp-ramp-4: #e76f51;
+  --cgp-ramp-5: #b3261e;
+  --cgp-missing: #9aa0a6;
+  --cgp-marker-stroke: #ffffff;
+  --cgp-grid: rgba(27, 31, 35, 0.12);
+  --cgp-muted: #5b6770;
+}
+
+.cgp-map {
+  width: 100%;
+  min-height: 300px;
+  border-radius: 4px;
+  z-index: 0;
+}
+
+.cgp-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--cgp-muted);
+  padding: 0.25rem 0;
+}
+
+.cgp-legend .cgp-swatch {
+  width: 22px;
+  height: 12px;
+  display: inline-block;
+  border-radius: 2px;
+}
+
+.cgp-pills {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  padding: 0.25rem 0;
+}
+
+.cgp-pills button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--cgp-grid);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cgp-pills button:hover,
+.cgp-pills button:focus-visible {
+  border-color: currentColor;
+}
+
+.cgp-popup-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.cgp-popup-title .cgp-local {
+  font-weight: 400;
+  color: var(--cgp-muted);
+}
+
+.cgp-popup-place,
+.cgp-popup-foot {
+  color: var(--cgp-muted);
+  font-size: 0.78rem;
+}
+
+.cgp-popup table {
+  border-collapse: collapse;
+  margin: 0.4rem 0;
+  font-size: 0.82rem;
+}
+
+.cgp-popup td {
+  padding: 0.05rem 0.4rem 0.05rem 0;
+  white-space: nowrap;
+}
+
+.cgp-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.cgp-table th,
+.cgp-table td {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--cgp-grid);
+}
+
+.cgp-table td.cgp-num,
+.cgp-table th.cgp-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cgp-stale {
+  color: var(--cgp-muted);
+  font-size: 0.75rem;
+}
+
+.cgp-notice {
+  font-size: 0.78rem;
+  color: var(--cgp-muted);
+  line-height: 1.35;
+}
+
+.cgp-alert {
+  font-size: 0.8rem;
+  border-left: 3px solid var(--cgp-ramp-4);
+  padding: 0.3rem 0.5rem;
+  margin: 0.4rem 0;
+}
+
+.cgp-small-multiples {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.6rem;
+}
+
+.cgp-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.cgp-results button {
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--cgp-grid);
+  padding: 0.25rem 0.1rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cgp-results button:hover,
+.cgp-results button:focus-visible {
+  background: rgba(31, 111, 139, 0.12);
+}
+
+.cgp-sidebar-section {
+  margin-top: 0.6rem;
+}
