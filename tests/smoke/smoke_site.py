@@ -246,6 +246,7 @@ def main() -> int:
     parser.add_argument("--headed", action="store_true", help="show the browser")
     args = parser.parse_args()
 
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 
     site_dir = Path(args.site).resolve()
@@ -314,6 +315,37 @@ def main() -> int:
             wait_idle(page, failures, "step 3 map")
             map_check(page, failures, "step 3", latest, "regular")
             check_clean(page, failures, "step 3", collected)
+
+            # Step 3b: a marker click has to show that station's prices and keep
+            # showing them. The popup opened and was destroyed ~15ms later by a
+            # marker-layer rebuild, so anything that only checked it opened would
+            # have passed while the map was, in use, dead.
+            marker = page.evaluate(
+                """() => {
+                  const el = document.querySelector('.cgp-map');
+                  const layers = el && el._markers ? el._markers.getLayers() : [];
+                  if (!layers.length) return null;
+                  const pt = el._map.latLngToContainerPoint(layers[0].getLatLng());
+                  const r = el.getBoundingClientRect();
+                  return {x: r.left + pt.x, y: r.top + pt.y};
+                }"""
+            )
+            if not marker:
+                failures.add("step 3b: the map drew no markers to click")
+            else:
+                page.mouse.click(marker["x"], marker["y"])
+                try:
+                    page.wait_for_selector(".leaflet-popup", timeout=5_000)
+                    page.wait_for_timeout(1_200)
+                    if page.locator(".leaflet-popup").count() != 1:
+                        failures.add("step 3b: the station popup did not stay open")
+                    elif not page.locator(".leaflet-popup .cgp-popup table tr").count():
+                        failures.add("step 3b: the station popup carried no prices")
+                    else:
+                        print("step 3b: marker click shows prices and they stay", flush=True)
+                except PlaywrightTimeoutError:
+                    failures.add("step 3b: clicking a marker opened no popup")
+                check_clean(page, failures, "step 3b", collected)
 
             # Step 4: the Station deep link.
             page.goto(f"{base_url}?station={quote(first_key, safe='')}#station", wait_until="load")

@@ -75,8 +75,17 @@ stationsAll = FileAttachment("data/stations.json").json()
 theme = Generators.observe((notify) => {
   const body = document.body;
   const read = () => (body.classList.contains("quarto-dark") ? "dark" : "light");
-  notify(read());
-  const observer = new MutationObserver(() => notify(read()));
+  let current = read();
+  notify(current);
+  // Only emit on a real change. Leaflet rewrites body's class list during a
+  // click, and re-emitting the same theme there rebuilt the marker layer out
+  // from under the popup that click had just opened.
+  const observer = new MutationObserver(() => {
+    const next = read();
+    if (next === current) return;
+    current = next;
+    notify(next);
+  });
   observer.observe(body, {attributes: true, attributeFilter: ["class"]});
   return () => observer.disconnect();
 })
@@ -149,11 +158,20 @@ function radioControl(name, entries, value, label) {
   const keys = entries.map((entry) => entry[1]);
   const input = Inputs.radio(new Map(entries), {label, value});
   input.setAttribute("data-control", name);
+  input.classList.add("cgp-field");
   // Stable hooks for the smoke test: Observable Inputs give the radios no
   // value attribute of their own.
   input.querySelectorAll("input[type=radio]").forEach((el, i) => {
     el.setAttribute("data-value", keys[i]);
   });
+  return input;
+}
+
+// Observable Inputs come with a notebook layout; `cgp-field` restyles them as
+// stacked groups so every control on the page reads the same way.
+function asField(input, {inline = false} = {}) {
+  input.classList.add("cgp-field");
+  if (inline) input.classList.add("cgp-field--inline");
   return input;
 }
 
@@ -514,6 +532,63 @@ function popupHtml(station, vol) {
   return `<div class="cgp-popup">${parts.join("")}</div>`;
 }
 
+// The price beside a symbol, in whichever currency is showing. Three digits at
+// per-litre scale, two per gallon, so the labels stay the same width.
+function mapLabel(station, value) {
+  const entry =
+    gradeEntry(station, "regular") ||
+    gradeEntry(station, "premium") ||
+    gradeEntry(station, "diesel");
+  const code = currency === "USD" ? "USD" : entry ? entry.currency : "";
+  return `${fmtNumber(value, volume === "gal" ? 2 : 3)} ${code}`;
+}
+
+// A graduated symbol: dearer stations draw larger, and every symbol grows with
+// zoom. Zoomed out, small dots keep a continent readable instead of merging into
+// one blob; zoomed in, the symbols separate and carry their price.
+function markerRadius(zoom, fraction) {
+  const base = Math.min(11.5, 3.4 + zoom * 0.7);
+  const weight = fraction == null ? 0.7 : 0.62 + fraction * 0.7;
+  // Never below 4px: a symbol smaller than that is hard to see and harder to
+  // hit, which costs more than the extra overlap it saves.
+  const r = Math.max(4, Math.min(14, base * weight));
+  return Math.round(r * 10) / 10;
+}
+
+function usdFraction(station, grade, vol, domain) {
+  if (!domain) return null;
+  const usd = stationPrice(station, grade, "USD", vol);
+  if (usd == null) return null;
+  return Math.min(1, Math.max(0, (usd - domain[0]) / (domain[1] - domain[0])));
+}
+
+// Above this zoom the map is showing a place rather than a hemisphere, so each
+// station gets its price beside it instead of only on click.
+LABEL_ZOOM = 8;
+
+function applyZoomStyling(el) {
+  const map = el._map;
+  if (!map) return;
+  const zoom = map.getZoom();
+  const labelled = zoom >= LABEL_ZOOM;
+  el.classList.toggle("cgp-map-zoomed", labelled);
+  el._markers.eachLayer((marker) => {
+    marker.setRadius(markerRadius(zoom, marker._cgpFraction));
+    const tip = marker.getTooltip();
+    if (!tip) return;
+    const permanent = labelled;
+    if (tip.options.permanent !== permanent) {
+      marker.unbindTooltip();
+      marker.bindTooltip(tip.getContent(), {
+        direction: "top",
+        offset: [0, -2],
+        permanent,
+        className: "cgp-map-label"
+      });
+    }
+  });
+}
+
 // Rebuilt whenever Grade, Currency, Volume or the colour mode changes.
 markerLayerUpdate = {
   const el = mapEl;
@@ -536,19 +611,32 @@ markerLayerUpdate = {
         usd == null ? null : Math.min(1, Math.max(0, (usd - domain[0]) / (domain[1] - domain[0])));
       fill = colorForFraction(t, pal);
     }
+    const fraction =
+      effectiveColorMode === "rank"
+        ? ranks.get(station.station_key)
+        : usdFraction(station, grade, volume, domain);
     const marker = L.circleMarker([station.lat, station.lon], {
-      radius: 6,
+      radius: markerRadius(el._map.getZoom(), fraction),
       weight: 1,
       color: pal.stroke,
       opacity: 0.9,
       fillColor: fill,
-      fillOpacity: 0.9
+      fillOpacity: 0.85
     });
-    marker.bindPopup(() => popupHtml(station, volume), {maxWidth: 340});
+    marker._cgpFraction = fraction;
+    marker.bindPopup(() => popupHtml(station, volume), {maxWidth: 340, autoPan: true});
+    if (value != null) {
+      marker.bindTooltip(mapLabel(station, value), {
+        direction: "top",
+        offset: [0, -2],
+        className: "cgp-map-label"
+      });
+    }
     marker.addTo(layer);
     count += 1;
   }
   el.setAttribute("data-marker-count", String(count));
+  applyZoomStyling(el);
   return count;
 }
 ```
@@ -769,11 +857,12 @@ stationMedianRows = {
 
 # Map
 
-## Row {height="14%"}
+## Row {height="18%"}
 
-::: {.card title="Colour and countries" padding="4px"}
+::: {.card .cgp-controls-card title="Colour and countries" padding="4px"}
 
 ```{ojs}
+//| output: false
 viewof colorMode = radioControl(
   "colormode",
   [["Rank within country", "rank"], ["Absolute", "absolute"]],
@@ -783,6 +872,7 @@ viewof colorMode = radioControl(
 ```
 
 ```{ojs}
+//| output: false
 mapLegend = {
   const pal = palette;
   const caption =
@@ -791,13 +881,16 @@ mapLegend = {
       : `USD ${volumeLabel}, 2nd to 98th percentile`;
   return html`<div class="cgp-legend"><span>Cheaper</span>${pal.ramp.map(
     (color) => html`<span class="cgp-swatch" style=${"background:" + color}></span>`
-  )}<span>Dearer</span><span>· ${caption}</span>
-    <span class="cgp-swatch" style=${"background:" + pal.missing}></span>
-    <span>no USD value</span></div>`;
+  )}<span>Dearer</span>
+    <span class="cgp-legend-note">${caption}</span>
+    <span class="cgp-legend-missing"><span class="cgp-swatch" style=${
+      "background:" + pal.missing
+    }></span> no USD value</span></div>`;
 }
 ```
 
 ```{ojs}
+//| output: false
 countryPills = {
   const el = mapEl;
   const buttons = ["World", ...COUNTRY_ORDER].map((code) => {
@@ -814,9 +907,18 @@ countryPills = {
 }
 ```
 
+```{ojs}
+// One chunk, so one card body: three chunks each got their own and stacked
+// down a card too short to hold them, clipping all three.
+html`<div class="cgp-map-controls">
+  <div class="cgp-map-controls-top">${viewof colorMode}${mapLegend}</div>
+  ${countryPills}
+</div>`
+```
+
 :::
 
-## Row {height="86%"}
+## Row {height="82%"}
 
 ::: {.card title="Stations" padding="0px"}
 
@@ -830,6 +932,7 @@ mapEl = {
   map.setView([25, -30], 2);
   el._map = map;
   el._markers = L.layerGroup().addTo(map);
+  map.on("zoomend", () => applyZoomStyling(el));
   map.on("popupopen", (event) => {
     const node = event.popup.getElement();
     const link = node ? node.querySelector("[data-station-link]") : null;
@@ -924,22 +1027,30 @@ compareNotes = {
 
 # Trends
 
-## Row {height="18%"}
+## Row {height="14%"}
 
-::: {.card title="Breakdown" padding="4px"}
+::: {.card .cgp-controls-card title="Breakdown" padding="4px"}
 
 ```{ojs}
-viewof trendCountry = Inputs.select(["All countries", ...COUNTRY_ORDER], {
-  label: "Breakdown",
-  format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
-})
+//| output: false
+viewof trendCountry = asField(
+  Inputs.select(["All countries", ...COUNTRY_ORDER], {
+    label: "Breakdown",
+    format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
+  })
+)
 ```
 
 ```{ojs}
-viewof showBand = Inputs.toggle({label: "Show the p25–p75 band", value: true})
+//| output: false
+viewof showBand = asField(
+  Inputs.toggle({label: "Show the p25–p75 band", value: true}),
+  {inline: true}
+)
 ```
 
 ```{ojs}
+//| output: false
 viewof trendRegions = {
   const options = trendRegionOptions;
   const input = Inputs.checkbox(
@@ -953,14 +1064,28 @@ viewof trendRegions = {
       }
     }
   );
+  // Only a country breakdown has regions to pick from; with "All countries"
+  // selected there is nothing to show, so the control stands down rather than
+  // rendering an empty box.
   if (!options.length) input.style.display = "none";
-  return input;
+  return asField(input);
 }
+```
+
+```{ojs}
+// Quarto gives every chunk its own card body, so three chunks stack down the
+// card however short it is. Placing the controls in one chunk lets them sit on
+// a single row -- which is all the height they need.
+html`<div class="cgp-controls-row">${[
+  viewof trendCountry,
+  viewof showBand,
+  viewof trendRegions
+]}</div>`
 ```
 
 :::
 
-## Row {height="82%"}
+## Row {height="86%"}
 
 ::: {.card title="Price over time"}
 
@@ -1169,17 +1294,24 @@ trendView = {
 
 ## Row {height="26%"}
 
-::: {.card title="Find a station" padding="4px"}
+::: {.card .cgp-search-card title="Find a station" padding="4px"}
 
 ```{ojs}
-viewof stationQuery = Inputs.search(stationsAll, {
-  placeholder: "Name, local name, city or region…",
-  columns: ["name", "name_local", "city", "region"],
-  label: "Search"
-})
+//| output: false
+viewof stationQuery = asField(
+  Inputs.search(stationsAll, {
+    placeholder: "Name, local name, city or region…",
+    columns: ["name", "name_local", "city", "region"],
+    label: "Search"
+  }),
+  {inline: true}
+)
 ```
 
 ```{ojs}
+// The search box and its results share one chunk, and so one card body. Given
+// a chunk each, Quarto sized the box's body to 26px and clipped the label and
+// the input inside it.
 stationResults = {
   const buttons = stationQuery.slice(0, 40).map((row) => {
     const suffix =
@@ -1192,8 +1324,10 @@ stationResults = {
     button.addEventListener("click", () => stationChannel.open(row.station_key));
     return button;
   });
-  if (!buttons.length) return html`<div class="cgp-notice">No station matches.</div>`;
-  return html`<div class="cgp-results">${buttons}</div>`;
+  const body = buttons.length
+    ? html`<div class="cgp-results">${buttons}</div>`
+    : html`<div class="cgp-notice">No station matches.</div>`;
+  return html`<div class="cgp-search">${viewof stationQuery}${body}</div>`;
 }
 ```
 

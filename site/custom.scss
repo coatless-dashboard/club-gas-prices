@@ -25,6 +25,12 @@ $navbar-fg: #f4f7f8 !default;
   --cgp-marker-stroke: #ffffff;
   --cgp-grid: rgba(27, 31, 35, 0.12);
   --cgp-muted: #5b6770;
+  --cgp-control-bg: #ffffff;
+  --cgp-control-border: rgba(27, 31, 35, 0.18);
+  --cgp-control-hover: rgba(31, 111, 139, 0.08);
+  --cgp-control-active: #1f6f8b;
+  --cgp-control-active-fg: #ffffff;
+  --cgp-label: #3b444c;
 }
 
 .cgp-map {
@@ -42,6 +48,21 @@ $navbar-fg: #f4f7f8 !default;
   font-size: 0.8rem;
   color: var(--cgp-muted);
   padding: 0.25rem 0;
+}
+
+// The caption used to start with a bare separator, which wrapped onto its own
+// line and left the dot stranded. It is its own group now and carries no
+// separator at all; the swatch stays glued to the words it explains.
+.cgp-legend-note {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cgp-legend-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
 }
 
 .cgp-legend .cgp-swatch {
@@ -148,8 +169,56 @@ $navbar-fg: #f4f7f8 !default;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  max-height: 260px;
+  // The card is a percentage of the viewport, so a fixed cap here can always
+  // outgrow it and draw the list over the cards below. Fill what the card has
+  // and scroll inside it instead.
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
+}
+
+// Quarto wraps each OJS cell in a plain block that sizes to its content, so a
+// tall list inside it overflows the card rather than scrolling. Only this card
+// holds something that can outgrow its box, so the override stays scoped to it.
+.cgp-search-card .observablehq {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+// The box keeps whatever height it needs; only the list below it gives way.
+.cgp-search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cgp-search > .cgp-field {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+// A toggle reads better with its caption after the box; a search box does not.
+// Restore document order here: caption, box, result count.
+.cgp-search > .cgp-field > label {
+  order: 0;
+}
+
+.cgp-search > .cgp-field input {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--cgp-control-border);
+  border-radius: 6px;
+  background: var(--cgp-control-bg);
+  color: inherit;
+  min-width: 18rem;
 }
 
 .cgp-results button {
@@ -171,4 +240,230 @@ $navbar-fg: #f4f7f8 !default;
 
 .cgp-sidebar-section {
   margin-top: 0.6rem;
+}
+
+
+// ---------------------------------------------------------------------------
+// Controls
+//
+// Observable Inputs ship a layout built for a notebook: a fixed-width label
+// column beside the control, which wraps into two ragged lines the moment a
+// label is longer than the column or the viewport narrows. Every control on
+// this dashboard is relabelled here as a stacked group -- caption above,
+// options below -- so the sidebar and the cards read the same way and nothing
+// depends on how wide the label happens to be.
+// ---------------------------------------------------------------------------
+
+.cgp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+
+.cgp-field > label,
+.cgp-field-label {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cgp-label);
+  width: auto;
+  max-width: none;
+}
+
+// Observable renders a group as:  form > label(caption) + div > label > input
+// -- the element the cell returns IS the form, so the options live one level
+// down. Each option becomes a pill so the hit target is the whole option rather
+// than the 13px dot, which is the part that was awkward to use.
+.cgp-field > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: 100%;
+  max-width: none;
+}
+
+.cgp-field > div > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.28rem 0.6rem;
+  font-size: 0.85rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  border: 1px solid var(--cgp-control-border);
+  border-radius: 999px;
+  background: var(--cgp-control-bg);
+  cursor: pointer;
+  width: auto;
+  min-width: 0;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.cgp-field > div > label:hover {
+  background: var(--cgp-control-hover);
+}
+
+.cgp-field > div > label:has(input:checked) {
+  background: var(--cgp-control-active);
+  border-color: var(--cgp-control-active);
+  color: var(--cgp-control-active-fg);
+}
+
+.cgp-field > div > label:has(input:focus-visible) {
+  outline: 2px solid var(--cgp-control-active);
+  outline-offset: 2px;
+}
+
+// The native control still carries the state for assistive technology and for
+// browsers without :has(), so it stays in the flow rather than display:none.
+.cgp-field > div > label input[type="radio"],
+.cgp-field > div > label input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--cgp-control-active);
+}
+
+.cgp-field select {
+  // Chrome renders a <select> with display:flex as a bare outline -- no text,
+  // no arrow -- and something upstream was setting exactly that.
+  display: block;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--cgp-control-border);
+  border-radius: 6px;
+  background: var(--cgp-control-bg);
+  color: inherit;
+  width: auto;
+  min-width: 11rem;
+  max-width: 18rem;
+  flex: 0 0 auto;
+}
+
+// A single toggle reads as one pill, with its caption inline instead of in a
+// column that wrapped "Show the p25-p75 band" onto two lines beside the box.
+.cgp-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cgp-field--inline > label,
+.cgp-field--inline > div,
+.cgp-field--inline .cgp-field-label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+// Observable writes a fixed width onto the caption as an inline style, which
+// cuts off anything longer than its column. Only !important reaches it.
+.cgp-field > label {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+}
+
+.cgp-field--inline > label {
+  order: 2;
+}
+
+.cgp-field--inline > div {
+  order: 1;
+  flex: 0 0 auto;
+  width: auto;
+}
+
+// A card holding only controls lays them out along the row instead of stacking
+// them down the left edge and leaving the rest of the card empty.
+.cgp-controls-card .card-body {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: flex-start;
+  gap: 0.2rem 1.8rem;
+  padding-top: 0.7rem;
+  padding-bottom: 0.3rem;
+  overflow-x: auto;
+}
+
+.cgp-controls-card .card-body > * {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.cgp-controls-card .cgp-field {
+  margin-bottom: 0.45rem;
+}
+
+.cgp-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.4rem 1.6rem;
+}
+
+.cgp-controls-row .cgp-field {
+  margin-bottom: 0.5rem;
+}
+
+// Landing on a page hash scrolls that section into view, and on a viewport
+// short enough for the page to overflow that carries the header off the top --
+// taking the only navigation with it, and on a phone the nav is already behind
+// a hamburger. Pin it so it cannot leave.
+#quarto-dashboard-header {
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+}
+
+// The colour control, its legend and the country jump-buttons, in one flow.
+// The first two share a line while there is room and the legend wraps under it
+// when there is not; the country pills always get their own.
+.cgp-map-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 0;
+}
+
+.cgp-map-controls-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 1.4rem;
+}
+
+.cgp-map-controls-top > .cgp-field {
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.cgp-map-controls .cgp-legend {
+  padding: 0;
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+// Map symbol labels, shown from LABEL_ZOOM up.
+.cgp-map-label {
+  background: var(--cgp-control-bg);
+  border: 1px solid var(--cgp-control-border);
+  border-radius: 4px;
+  box-shadow: none;
+  color: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.cgp-map-label::before {
+  display: none;
 }

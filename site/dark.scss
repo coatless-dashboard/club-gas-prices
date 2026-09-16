@@ -21,6 +21,12 @@ $navbar-fg: #e6e9ec !default;
   --cgp-marker-stroke: #14171a;
   --cgp-grid: rgba(230, 233, 236, 0.18);
   --cgp-muted: #9aa4ad;
+  --cgp-control-bg: #1b2024;
+  --cgp-control-border: rgba(230, 233, 236, 0.22);
+  --cgp-control-hover: rgba(108, 182, 217, 0.14);
+  --cgp-control-active: #6cb6d9;
+  --cgp-control-active-fg: #0e1113;
+  --cgp-label: #b6bec5;
 }
 
 // OpenStreetMap ships no dark raster style, so invert the tiles and rotate the
