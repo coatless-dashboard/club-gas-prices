@@ -1,0 +1,162 @@
+name: Render
+
+on:
+  workflow_run:
+    workflows: [Capture, Rebuild]
+    types: [completed]
+  push:
+    paths:
+      - site/**
+      - src/costco_gas/sitedata.py
+      - config/grades.csv
+      - config/site.toml
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/render.yml
+  workflow_dispatch:
+
+concurrency:
+  group: render
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  render:
+    name: Render
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && !contains(github.event.workflow_run.display_title, 'dry run')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+      CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+      CARTO_BASEMAP_KEY: ${{ vars.CARTO_BASEMAP_KEY }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --locked
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.10.18
+
+      - name: Fetch a consistent current release
+        id: current
+        timeout-minutes: 10
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/verify_current.py" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          assets = manifest["assets"]
+          for name in (
+              "costco-gas-all.parquet",
+              "costco-gas-latest.csv",
+              "stations.csv",
+              "fx.csv",
+          ):
+              entry = assets.get(name)
+              if entry is None:
+                  sys.exit(f"manifest.json has no entry for {name}")
+              path = root / name
+              if not path.exists():
+                  sys.exit(f"{name} is missing from the download")
+              data = path.read_bytes()
+              if len(data) != entry["size"]:
+                  sys.exit(f"{name}: size {len(data)} != manifest {entry['size']}")
+              digest = hashlib.sha256(data).hexdigest()
+              if digest != entry["sha256"]:
+                  sys.exit(f"{name}: sha256 {digest} != manifest {entry['sha256']}")
+          print(f"verified {len(assets)} assets against manifest.json")
+          PY
+          if ! gh release view current >/dev/null 2>&1; then
+            echo "::notice::no current release yet, so there is nothing to render"
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for attempt in 1 2 3 4 5; do
+            rm -rf state/current
+            mkdir -p state/current
+            ok=1
+            gh release download current --dir state/current --clobber \
+              --pattern manifest.json \
+              --pattern costco-gas-all.parquet \
+              --pattern costco-gas-latest.csv \
+              --pattern stations.csv \
+              --pattern fx.csv || ok=0
+            if [ "$ok" = 1 ] && python3 "${RUNNER_TEMP}/verify_current.py" state/current; then
+              echo "has_data=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::current release was inconsistent on attempt ${attempt} of 5"
+            sleep 60
+          done
+          echo "::error::current release never became consistent"
+          exit 1
+
+      - name: Build the site data
+        if: ${{ steps.current.outputs.has_data == 'true' }}
+        run: uv run costco-gas site-data --current state/current --out site/data
+
+      - name: Render the dashboard
+        if: ${{ steps.current.outputs.has_data == 'true' }}
+        run: quarto render site/index.qmd
+
+      - name: Stage _site
+        if: ${{ steps.current.outputs.has_data == 'true' }}
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+          cp site/index.html _site/index.html
+          if [ -d site/index_files ]; then
+            cp -R site/index_files _site/index_files
+          fi
+          cp -R site/data _site/data
+          leaked="$(find _site \( -name '*.qmd' -o -name '*.scss' \) -print)"
+          if [ -n "$leaked" ]; then
+            echo "::error::source files reached _site"
+            printf '%s\n' "$leaked"
+            exit 1
+          fi
+
+      - name: Smoke test the rendered site
+        if: ${{ steps.current.outputs.has_data == 'true' }}
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          uv sync --locked --group smoke
+          uv run python tests/smoke/smoke_site.py _site
+
+      - name: Upload the Pages artifact
+        if: ${{ steps.current.outputs.has_data == 'true' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to Pages
+        id: deploy
+        if: ${{ steps.current.outputs.has_data == 'true' }}
+        uses: actions/deploy-pages@v4
