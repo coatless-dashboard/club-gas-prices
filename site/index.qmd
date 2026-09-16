@@ -1590,6 +1590,13 @@ open (the pre-opening 3.999 / 5.999 pattern in the United States, and Canadian
 warehouses with no gas hours), premium-only business-centre placeholders, and
 values outside per-unit sanity bounds.
 
+**How fresh a price really is.** A capture records when *we* read a price, not
+when the retailer changed it. The United Kingdom's store feed is served with a
+90-minute cache, and a re-request 73 seconds later returned a byte-identical
+response, so a UK price can be up to about an hour and a half old however often
+this runs. Every country's feed is a published figure rather than a live reading
+from the pump.
+
 **UTC days versus local time.** Days are UTC days. For Japan, Taiwan and
 Australia the last capture of a UTC day arrives early the next local morning, so
 `local_date` in the released rows can be a day ahead of `capture_date`.
