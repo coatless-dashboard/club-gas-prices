@@ -121,7 +121,8 @@ def test_no_chart_is_built_in_a_hidden_chunk():
     hidden = [c for c in ojs_chunks() if c.lstrip().startswith("//| output: false")]
     assert len(hidden) >= 4  # the chunk split works, so the loop below is not vacuous
     for chunk in hidden:
-        first = chunk.strip().splitlines()[1][:60]
+        lines = chunk.strip().splitlines()
+        first = lines[1][:60] if len(lines) > 1 else lines[0][:60]
         assert "Plot.plot(" not in chunk, f"hidden chunk builds a chart: {first}"
 
 
