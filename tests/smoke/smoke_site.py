@@ -302,6 +302,56 @@ def main() -> int:
                     plot_check(page, failures, "step 2 trends", TREND_LINES, countries, "lines")
                 check_clean(page, failures, f"step 2 {page_id}", collected)
 
+            # Step 2c: hovering a chart has to raise a tip. The tip mark is easy
+            # to render and hard to notice missing, and a helper defined in the
+            # wrong chunk once took the whole Trends chart down to zero width.
+            for page_id in ("compare", "trends"):
+                page.locator(f'a.nav-link[href="#{page_id}"]').first.click()
+                page.wait_for_selector(f"#{page_id}.tab-pane.active", timeout=10_000)
+                wait_idle(page, failures, f"step 2c {page_id}")
+                try:
+                    # A chart sizes itself a tick after its pane becomes visible.
+                    page.wait_for_function(
+                        """(pane) => [...document.querySelectorAll(`#${pane} svg`)]
+                             .some((s) => s.getBoundingClientRect().width > 100)""",
+                        arg=page_id,
+                        timeout=10_000,
+                    )
+                except PlaywrightTimeoutError:
+                    failures.add(f"step 2c {page_id}: no chart reached a usable width")
+                    continue
+                spot = page.evaluate(
+                    """(pane) => {
+                      const svg = [...document.querySelectorAll(`#${pane} svg`)]
+                        .find((s) => s.getBoundingClientRect().width > 100);
+                      if (!svg) return null;
+                      const dots = [...svg.querySelectorAll("g[aria-label='dot'] circle")];
+                      if (!dots.length) return null;
+                      const r = dots[Math.floor(dots.length / 2)].getBoundingClientRect();
+                      return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                    }""",
+                    page_id,
+                )
+                if not spot:
+                    failures.add(f"step 2c {page_id}: no chart wide enough to hover")
+                    continue
+                page.mouse.move(spot["x"], spot["y"])
+                page.wait_for_timeout(700)
+                text = page.evaluate(
+                    """(pane) => {
+                      const svg = [...document.querySelectorAll(`#${pane} svg`)]
+                        .find((s) => s.getBoundingClientRect().width > 100);
+                      const tip = svg && svg.querySelector("g[aria-label='tip']");
+                      return tip ? tip.textContent.trim() : "";
+                    }""",
+                    page_id,
+                )
+                if not text:
+                    failures.add(f"step 2c {page_id}: hovering a point raised no tip")
+                else:
+                    print(f"step 2c {page_id}: tip reads {text.splitlines()[0][:40]!r}", flush=True)
+                check_clean(page, failures, f"step 2c {page_id}", collected)
+
             # Step 3: exercise every control value, then re-check the Map.
             for name, values in (("grade", GRADES), ("currency", CURRENCIES), ("volume", VOLUMES)):
                 for value in values:

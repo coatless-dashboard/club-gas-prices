@@ -132,3 +132,27 @@ def test_no_plot_scheme_the_pinned_plot_build_does_not_know():
     # and turns the whole cell into an error box. A scheme is always a string
     # literal, so the page may still say the name in a comment.
     assert '"observable10"' not in read_qmd()
+
+
+def test_the_cluster_plugin_is_loaded_without_touching_globals():
+    """Blanking `define` to force a UMD's browser branch breaks the whole page.
+
+    OJS supplies an AMD `define`, so the plugin registers as an anonymous module
+    and never patches the global L. Shadowing define/module/exports as function
+    parameters does the same job to one script; blanking the real globals took
+    every cell still loading down with it.
+    """
+    text = read_qmd()
+    assert 'new Function("define", "module", "exports", source)' in text
+    assert "window.define = undefined" not in text
+    # The map has to name its own maxZoom: the cluster group is added before any
+    # tile layer exists and refuses a map whose maximum zoom is unbounded.
+    assert "maxZoom: 19" in text
+
+
+def test_the_map_groups_stations_and_stops_at_a_stated_zoom():
+    text = read_qmd()
+    assert "markerClusterGroup" in text
+    assert "disableClusteringAtZoom: LABEL_ZOOM" in text
+    # Falls back to a plain layer group rather than losing the map entirely.
+    assert "L.layerGroup()" in text

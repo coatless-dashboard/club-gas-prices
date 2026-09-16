@@ -109,7 +109,9 @@ palette = {
     stroke: read("--cgp-marker-stroke", "#ffffff"),
     muted: read("--cgp-muted", "#5b6770"),
     grid: read("--cgp-grid", "rgba(27,31,35,0.12)"),
-    text: read("--bs-body-color", "#1b1f23")
+    text: read("--bs-body-color", "#1b1f23"),
+    // The tip's own background, so it stays readable in either theme.
+    surface: read("--cgp-control-bg", "#ffffff")
   };
 }
 
@@ -186,6 +188,49 @@ function escapeHtml(value) {
 function perVolume(valuePerLitre, vol) {
   if (valuePerLitre == null || !isFinite(valuePerLitre)) return null;
   return vol === "gal" ? valuePerLitre * LITRES_PER_GALLON : valuePerLitre;
+}
+
+// A hover tip. `title:` on a mark only gets the browser's own tooltip, which
+// takes a second to appear and cannot be styled; Plot's tip mark follows the
+// pointer and reads the same channels.
+function tipStyle() {
+  return {
+    fill: palette.surface,
+    stroke: palette.grid,
+    fontSize: 12,
+    lineHeight: 1.3
+  };
+}
+
+// Leaflet.markercluster attaches itself to the global L, so it is loaded as a
+// script tag rather than imported. Everything the map does waits on this cell,
+// which resolves to L either way: if the CDN is unreachable the map still draws,
+// just without grouping.
+clusterL = {
+  const CDN = "https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/";
+  if (!L.markerClusterGroup) {
+    for (const file of ["MarkerCluster.css", "MarkerCluster.Default.css"]) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = CDN + file;
+      document.head.appendChild(link);
+    }
+    // The plugin is a UMD bundle, and OJS provides an AMD `define`: loaded as a
+    // plain script it registers as an anonymous module and never patches the
+    // global L the map uses. Running it with `define`, `module` and `exports`
+    // shadowed as parameters sends it down its browser branch instead. Blanking
+    // the real globals would do it too, and breaks every cell still loading.
+    try {
+      const response = await fetch(CDN + "leaflet.markercluster.js");
+      if (!response.ok) throw new Error(`markercluster: HTTP ${response.status}`);
+      const source = await response.text();
+      new Function("define", "module", "exports", source)(undefined, undefined, undefined);
+      if (!L.markerClusterGroup) throw new Error("markercluster did not attach to L");
+    } catch (error) {
+      console.warn("[cgp]", error.message, "- the map will not group stations");
+    }
+  }
+  return L;
 }
 
 function fmtNumber(value, digits) {
@@ -532,15 +577,72 @@ function popupHtml(station, vol) {
   return `<div class="cgp-popup">${parts.join("")}</div>`;
 }
 
-// The price beside a symbol, in whichever currency is showing. Three digits at
-// per-litre scale, two per gallon, so the labels stay the same width.
-function mapLabel(station, value) {
+// What hovering a station shows: enough to compare it with its neighbours
+// without opening anything. The click popup keeps the full detail -- every
+// grade as published, the rate used, and the link into its history.
+function hoverHtml(station) {
   const entry =
     gradeEntry(station, "regular") ||
     gradeEntry(station, "premium") ||
     gradeEntry(station, "diesel");
   const code = currency === "USD" ? "USD" : entry ? entry.currency : "";
-  return `${fmtNumber(value, volume === "gal" ? 2 : 3)} ${code}`;
+  const digits = volume === "gal" ? 2 : 3;
+  const priced = ["regular", "premium", "diesel"]
+    .map((key) => [GRADE_LABELS[key], stationPrice(station, key, currency, volume)])
+    .filter(([, price]) => price != null)
+    .map(([label, price]) => `${label} <b>${fmtNumber(price, digits)}</b>`);
+  const place = [station.city, station.region].filter((v) => v).join(", ");
+  const age = hoursAgo(station.captured_at_utc, nowTick);
+  const parts = [
+    `<div class="cgp-hover-name">${escapeHtml(station.name)}</div>`,
+    `<div class="cgp-hover-place">${escapeHtml(place)}${place ? " · " : ""}${escapeHtml(
+      COUNTRY_NAMES[station.country] || station.country
+    )}</div>`
+  ];
+  if (priced.length) {
+    parts.push(
+      `<div class="cgp-hover-prices">${priced.join(" · ")} ${escapeHtml(code)}${escapeHtml(
+        volumeShort
+      )}</div>`
+    );
+  } else {
+    parts.push(`<div class="cgp-hover-prices">no price for this grade</div>`);
+  }
+  if (age != null) {
+    parts.push(
+      `<div class="cgp-hover-foot">read ${Math.max(0, Math.round(age))} h ago · click for detail</div>`
+    );
+  }
+  return `<div class="cgp-hover">${parts.join("")}</div>`;
+}
+
+// A cluster is coloured by the median of the stations inside it, so a group
+// still reads as cheap or dear rather than as a neutral blob.
+function clusterIcon(el, cluster) {
+  const pal = el._pal || palette;
+  const fractions = cluster
+    .getAllChildMarkers()
+    .map((marker) => marker._cgpFraction)
+    .filter((f) => f != null)
+    .sort((a, b) => a - b);
+  // A true median: with two stations the upper one alone would paint the whole
+  // group its colour.
+  const mid = fractions.length / 2;
+  const median = !fractions.length
+    ? null
+    : fractions.length % 2
+      ? fractions[Math.floor(mid)]
+      : (fractions[mid - 1] + fractions[mid]) / 2;
+  const fill = median == null ? pal.missing : colorForFraction(median, pal);
+  const count = cluster.getChildCount();
+  const size = count < 10 ? 32 : count < 100 ? 40 : 48;
+  return L.divIcon({
+    className: "cgp-cluster",
+    iconSize: [size, size],
+    html:
+      `<span style="background:${fill};border-color:${pal.stroke}">` +
+      `${count}</span>`
+  });
 }
 
 // A graduated symbol: dearer stations draw larger, and every symbol grows with
@@ -562,30 +664,17 @@ function usdFraction(station, grade, vol, domain) {
   return Math.min(1, Math.max(0, (usd - domain[0]) / (domain[1] - domain[0])));
 }
 
-// Above this zoom the map is showing a place rather than a hemisphere, so each
-// station gets its price beside it instead of only on click.
+// Above this zoom the map is showing a place rather than a hemisphere, so
+// grouping stops helping and every station stands on its own.
 LABEL_ZOOM = 8;
 
 function applyZoomStyling(el) {
   const map = el._map;
   if (!map) return;
   const zoom = map.getZoom();
-  const labelled = zoom >= LABEL_ZOOM;
-  el.classList.toggle("cgp-map-zoomed", labelled);
+  el.classList.toggle("cgp-map-zoomed", zoom >= LABEL_ZOOM);
   el._markers.eachLayer((marker) => {
-    marker.setRadius(markerRadius(zoom, marker._cgpFraction));
-    const tip = marker.getTooltip();
-    if (!tip) return;
-    const permanent = labelled;
-    if (tip.options.permanent !== permanent) {
-      marker.unbindTooltip();
-      marker.bindTooltip(tip.getContent(), {
-        direction: "top",
-        offset: [0, -2],
-        permanent,
-        className: "cgp-map-label"
-      });
-    }
+    if (marker.setRadius) marker.setRadius(markerRadius(zoom, marker._cgpFraction));
   });
 }
 
@@ -596,6 +685,9 @@ markerLayerUpdate = {
   const pal = palette;
   const domain = absoluteDomain;
   const ranks = rankPercentiles;
+  // Read by clusterIcon, which is bound once when the map is built and would
+  // otherwise keep the palette it saw then.
+  el._pal = pal;
   layer.clearLayers();
   let count = 0;
   for (const station of latest) {
@@ -625,13 +717,11 @@ markerLayerUpdate = {
     });
     marker._cgpFraction = fraction;
     marker.bindPopup(() => popupHtml(station, volume), {maxWidth: 340, autoPan: true});
-    if (value != null) {
-      marker.bindTooltip(mapLabel(station, value), {
-        direction: "top",
-        offset: [0, -2],
-        className: "cgp-map-label"
-      });
-    }
+    marker.bindTooltip(hoverHtml(station), {
+      direction: "top",
+      offset: [0, -4],
+      className: "cgp-hover-tip"
+    });
     marker.addTo(layer);
     count += 1;
   }
@@ -928,10 +1018,32 @@ html`<div class="cgp-map-controls">
 // inserted where the cell is defined.
 mapEl = {
   const el = html`<div class="cgp-map" data-marker-count="0" style="height:360px"></div>`;
-  const map = L.map(el, {zoomControl: true, worldCopyJump: true, preferCanvas: true});
+  // maxZoom is set here rather than left to the tile layer: the cluster group is
+  // added before any layer exists, and it refuses a map whose maximum zoom is
+  // still unbounded. 19 is the lower of the two basemaps' limits.
+  const map = L.map(el, {
+    zoomControl: true,
+    worldCopyJump: true,
+    preferCanvas: true,
+    maxZoom: 19
+  });
   map.setView([25, -30], 2);
   el._map = map;
-  el._markers = L.layerGroup().addTo(map);
+  // Stations group while the map is showing a continent and separate as it is
+  // zoomed in; past LABEL_ZOOM every station stands on its own and carries its
+  // price, which is the zoom at which grouping stops helping.
+  el._markers = (
+    clusterL.markerClusterGroup
+      ? clusterL.markerClusterGroup({
+          maxClusterRadius: 44,
+          disableClusteringAtZoom: LABEL_ZOOM,
+          spiderfyOnMaxZoom: false,
+          showCoverageOnHover: false,
+          chunkedLoading: true,
+          iconCreateFunction: (cluster) => clusterIcon(el, cluster)
+        })
+      : L.layerGroup()
+  ).addTo(map);
   map.on("zoomend", () => applyZoomStyling(el));
   map.on("popupopen", (event) => {
     const node = event.popup.getElement();
@@ -951,7 +1063,7 @@ mapEl = {
 
 # Compare
 
-## Row {height="62%"}
+## Row {height="86%"}
 
 ::: {.card title="Median price by country"}
 
@@ -988,8 +1100,7 @@ compareView = {
         r: 6,
         fill: (row) => COUNTRY_COLORS[row.country],
         stroke: palette.stroke,
-        strokeWidth: 1,
-        title: (row) => `${fmtNumber(row.median, priceDigits)} USD, ${row.n} stations`
+        strokeWidth: 1
       }),
       Plot.text(data, {
         y: "label",
@@ -997,7 +1108,21 @@ compareView = {
         text: (row) => fmtNumber(row.median, priceDigits),
         dy: -14,
         fill: palette.text
-      })
+      }),
+      // Last, so it paints over the value labels rather than under them.
+      Plot.tip(
+        data,
+        Plot.pointer({
+          y: "label",
+          x: "median",
+          ...tipStyle(),
+          title: (row) =>
+            `${COUNTRY_NAMES[row.country] || row.country}\n` +
+            `median ${fmtNumber(row.median, priceDigits)} USD ${volumeLabel}\n` +
+            `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}\n` +
+            `${row.n} station${row.n === 1 ? "" : "s"}`
+        })
+      )
     ]
   });
 }
@@ -1005,9 +1130,9 @@ compareView = {
 
 :::
 
-## Row {height="38%"}
+## Row {height="14%"}
 
-::: {.card title="Notes"}
+::: {.card .cgp-notes-card title="Notes"}
 
 ```{ojs}
 compareNotes = {
@@ -1139,13 +1264,24 @@ trendView = {
         x: "day",
         y: "median",
         r: 2,
-        fill: (row) => COUNTRY_COLORS[row.country],
-        title: (row) =>
-          `${row.name} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)} USD`
+        fill: (row) => COUNTRY_COLORS[row.country]
       }),
       Plot.text(
         data.filter((row) => row.day.getTime() === lastDay),
         {x: "day", y: "median", text: "country", dx: 14, fill: (row) => COUNTRY_COLORS[row.country]}
+      ),
+      // Last, so it paints over the country labels rather than under them.
+      Plot.tip(
+        data,
+        Plot.pointer({
+          x: "day",
+          y: "median",
+          ...tipStyle(),
+          title: (row) =>
+            `${row.name} · ${row.day.toISOString().slice(0, 10)}\n` +
+            `median ${fmtNumber(row.median, priceDigits)} USD ${volumeLabel}\n` +
+            `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}`
+        })
       )
     );
     return Plot.plot({
@@ -1184,9 +1320,22 @@ trendView = {
           })
         );
       }
+      const unit = `${currencyOf.get(code) || ""} ${volumeShort}`;
       marks.push(
         Plot.line(rows, {x: "day", y: "median", stroke: COUNTRY_COLORS[code], strokeWidth: 2}),
-        Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]})
+        Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]}),
+        Plot.tip(
+          rows,
+          Plot.pointerX({
+            x: "day",
+            y: "median",
+            ...tipStyle(),
+            title: (row) =>
+              `${COUNTRY_NAMES[code]} · ${row.day.toISOString().slice(0, 10)}\n` +
+              `median ${fmtNumber(row.median, priceDigits)} ${unit}\n` +
+              `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}`
+          })
+        )
       );
       const figure = Plot.plot({
         // A panel, not the card: without an explicit width Quarto's autosizing
@@ -1235,7 +1384,18 @@ trendView = {
             stroke: COUNTRY_COLORS[trendCountry],
             strokeWidth: 2
           }),
-          Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[trendCountry]})
+          Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[trendCountry]}),
+          Plot.tip(
+            rows,
+            Plot.pointerX({
+              x: "day",
+              y: "median",
+              ...tipStyle(),
+              title: (row) =>
+                `${COUNTRY_NAMES[trendCountry]} · ${row.day.toISOString().slice(0, 10)}\n` +
+                `median ${fmtNumber(row.median, priceDigits)} ${unit} ${volumeLabel}`
+            })
+          )
         ]
       });
       return html`<div>
@@ -1268,14 +1428,18 @@ trendView = {
       y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
       marks: [
         Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
-        Plot.dot(data, {
-          x: "day",
-          y: "median",
-          r: 2,
-          fill: "region",
-          title: (row) =>
-            `${row.region} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.median, priceDigits)}`
-        })
+        Plot.dot(data, {x: "day", y: "median", r: 2, fill: "region"}),
+        Plot.tip(
+          data,
+          Plot.pointer({
+            x: "day",
+            y: "median",
+            ...tipStyle(),
+            title: (row) =>
+              `${row.region} · ${row.day.toISOString().slice(0, 10)}\n` +
+              `median ${fmtNumber(row.median, priceDigits)} ${unit} ${volumeLabel}`
+          })
+        )
       ]
     });
   }
