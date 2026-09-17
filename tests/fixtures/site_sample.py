@@ -65,7 +65,7 @@ NOTICE = (
     "from the price at the pump."
 )
 
-RELEASE_DL = "https://github.com/coatless-datasets/club-gas-prices/releases/download/current/"
+RELEASE_DL = "https://github.com/coatless-data/club-gas-prices/releases/download/current/"
 
 # fmt: off
 STATIONS = [
@@ -389,9 +389,9 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         "grades": GRADE_TABLE,
         "releases": {
             "current": (
-                "https://github.com/coatless-datasets/club-gas-prices/releases/tag/current"
+                "https://github.com/coatless-data/club-gas-prices/releases/tag/current"
             ),
-            "all": "https://github.com/coatless-datasets/club-gas-prices/releases",
+            "all": "https://github.com/coatless-data/club-gas-prices/releases",
             # sitedata also emits one download URL per `current` asset; the page links
             # only `current` and `all`, but the fixture carries them so it stays
             # substitutable for real meta.json.

@@ -62,7 +62,7 @@ def test_render_only_reads_the_data_repository():
     """This repository holds no capture code and must never be given a writer token."""
     text = read()
     assert text.startswith("name: Render\n")
-    assert "DATA_REPO: coatless-datasets/club-gas-prices" in text
+    assert "DATA_REPO: coatless-data/club-gas-prices" in text
     assert "CLUB_GAS_WRITER" not in text
     assert "permissions:\n  contents: read\n" in text
     # A GITHUB_TOKEN cannot start a workflow across repositories, so the render

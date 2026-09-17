@@ -22,7 +22,7 @@ aboutHeader = html`<div>
   <p class="cgp-notice">Built ${meta.built_at_utc} from capture ${meta.capture_id}.
     Data: <a href=${meta.releases.current}>current release</a> ·
     <a href=${meta.releases.all}>all releases</a> ·
-    <a href="https://github.com/coatless-datasets/club-gas-prices#schema-capture-grain-in-file-order">column
+    <a href="https://github.com/coatless-data/club-gas-prices#schema-capture-grain-in-file-order">column
     reference</a>.</p>
 </div>`
 ```

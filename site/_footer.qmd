@@ -7,7 +7,7 @@
 siteFooter = {
   const repo = (meta.releases && meta.releases.all
     ? meta.releases.all.replace(/\/releases.*$/, "")
-    : "https://github.com/coatless-datasets/club-gas-prices");
+    : "https://github.com/coatless-data/club-gas-prices");
   return html`<div>
     ${(Array.isArray(meta.notice) ? meta.notice : [meta.notice])
       .map((line) => html`<p class="cgp-footer-notice">${line}</p>`)}

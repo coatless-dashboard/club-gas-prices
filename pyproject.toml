@@ -1,7 +1,7 @@
 [project]
 name = "club-gas-prices-dashboard"
 version = "0.1.0"
-description = "A Quarto site for Costco fuel prices, rendered from the coatless-datasets release."
+description = "A Quarto site for Costco fuel prices, rendered from the coatless-data release."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = "MIT"

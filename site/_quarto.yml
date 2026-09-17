@@ -27,7 +27,7 @@ website:
         href: https://github.com/coatless-dashboard/club-gas-prices
         aria-label: "This site's source on GitHub"
       - icon: database
-        href: https://github.com/coatless-datasets/club-gas-prices/releases/tag/current
+        href: https://github.com/coatless-data/club-gas-prices/releases/tag/current
         aria-label: "Download the data"
 
 format:
