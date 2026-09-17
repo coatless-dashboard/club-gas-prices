@@ -388,9 +388,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         },
         "grades": GRADE_TABLE,
         "releases": {
-            "current": (
-                "https://github.com/coatless-data/club-gas-prices/releases/tag/current"
-            ),
+            "current": ("https://github.com/coatless-data/club-gas-prices/releases/tag/current"),
             "all": "https://github.com/coatless-data/club-gas-prices/releases",
             # sitedata also emits one download URL per `current` asset; the page links
             # only `current` and `all`, but the fixture carries them so it stays

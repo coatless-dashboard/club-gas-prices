@@ -33,9 +33,12 @@ VOLUMES = ["gal", "litre"]
 IDLE_TIMEOUT_MS = 60_000
 
 # The marks Observable Plot draws only when the page has rows: one dot per
-# country on Compare's median chart, one line per country on the Trends chart.
+# country on Compare's median chart, and on Trends one line per country --
+# or, until a second day has been captured, one dot, because a single reading
+# per country is a point and the page draws it as one. Either answers the
+# question this gate asks, which is whether the card drew the data at all.
 COMPARE_DOTS = 'svg g[aria-label="dot"] circle'
-TREND_LINES = 'svg g[aria-label="line"] path'
+TREND_MARKS = 'svg g[aria-label="line"] path, svg g[aria-label="dot"] circle'
 
 TILE_HOSTS = ("basemaps.cartocdn.com", "tile.openstreetmap.org")
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
@@ -205,16 +208,29 @@ def plot_check(
 
     `selector` names a mark Observable Plot only emits for real rows, so an
     empty page -- no data, a cell that threw, or output that never reached the
-    card it belongs to -- cannot pass. The wait is `state="visible"`, not
-    `attached`: a chart Quarto's dashboard autosizing measured against a hidden
-    container is in the DOM, with every mark the data calls for, inside an SVG
-    zero pixels wide. `wait_idle` has already seen every OJS cell finish and
-    this waits up to 60 s more, so the count below cannot race the render.
-    Like the Map check it allows 90%, because a country whose currency has no
-    rate that day legitimately has no USD value to draw.
+    card it belongs to -- cannot pass. What is waited on is a mark with a
+    non-empty box, not merely one in the DOM: a chart Quarto's dashboard
+    autosizing measured against a hidden container has every mark the data
+    calls for, inside an SVG zero pixels wide.
+
+    ANY match having a box is enough, which `wait_for_selector(state="visible")`
+    cannot express -- it judges the first match alone. On one day of history
+    each line is a single point, drawn as a real `path` whose `d` is `M x,y Z`
+    and whose box is 0x0, so the first match is permanently invisible while the
+    dots right after it are on screen. `wait_idle` has already seen every OJS
+    cell finish and this waits up to 60 s more, so the count below cannot race
+    the render. Like the Map check it allows 90%, because a country whose
+    currency has no rate that day legitimately has no USD value to draw.
     """
     try:
-        page.wait_for_selector(selector, timeout=IDLE_TIMEOUT_MS, state="visible")
+        page.wait_for_function(
+            """(sel) => [...document.querySelectorAll(sel)].some((el) => {
+                 const box = el.getBoundingClientRect();
+                 return box.width > 0 || box.height > 0;
+               })""",
+            arg=selector,
+            timeout=IDLE_TIMEOUT_MS,
+        )
     except Exception as exc:
         failures.add(f"{step}: no {what} were drawn ({type(exc).__name__}): {selector}")
         return
@@ -305,7 +321,7 @@ def main() -> int:
                 if page_id == "compare":
                     plot_check(page, failures, "step 2 compare", COMPARE_DOTS, countries, "dots")
                 elif page_id == "trends":
-                    plot_check(page, failures, "step 2 trends", TREND_LINES, countries, "lines")
+                    plot_check(page, failures, "step 2 trends", TREND_MARKS, countries, "marks")
                 check_clean(page, failures, f"step 2 {page_id}", collected)
 
             # Step 2c: hovering a chart has to raise a tip. The tip mark is easy
@@ -374,17 +390,27 @@ def main() -> int:
             # marker-layer rebuild, so anything that only checked it opened would
             # have passed while the map was, in use, dead.
             marker = page.evaluate(
-                """() => {
+                """async () => {
                   const el = document.querySelector('.cgp-map');
-                  const layers = el && el._markers ? el._markers.getLayers() : [];
+                  const group = el && el._markers;
+                  const layers = group ? group.getLayers() : [];
                   if (!layers.length) return null;
-                  const pt = el._map.latLngToContainerPoint(layers[0].getLatLng());
+                  const target = layers[0];
+                  // Past disableClusteringAtZoom every marker stands alone, so
+                  // the point below is the marker itself and not a cluster.
+                  el._map.setView(target.getLatLng(), 12, {animate: false});
+                  await new Promise((r) => setTimeout(r, 600));
+                  const visible = group.getVisibleParent
+                    ? group.getVisibleParent(target)
+                    : target;
+                  if (visible && visible !== target) return null;
+                  const pt = el._map.latLngToContainerPoint(target.getLatLng());
                   const r = el.getBoundingClientRect();
                   return {x: r.left + pt.x, y: r.top + pt.y};
                 }"""
             )
             if not marker:
-                failures.add("step 3b: the map drew no markers to click")
+                failures.add("step 3b: no marker stood alone to click, even zoomed in")
             else:
                 page.mouse.click(marker["x"], marker["y"])
                 try:
