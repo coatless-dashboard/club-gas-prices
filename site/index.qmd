@@ -652,6 +652,34 @@ function fmtPct(value) {
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
+// tableau10, the only ordinal scheme Plot 0.6.11 ships that suits this, has ten
+// colors. More series than that and it cycles without saying so.
+PALETTE_SERIES_CAP = 10;
+
+// A dot per reading is a good mark while the readings are far apart and a
+// texture once they are not: past roughly one every four pixels it stops
+// marking anything and starts implying a precision the line already carries.
+// At four captures a day this arrives after about seven months.
+function showDots(pointsPerSeries, plotWidth = 790) {
+  return pointsPerSeries <= plotWidth / 4;
+}
+
+// Stations behind the latest day, from a column the query already selects and
+// nothing drew.
+function latestStationCount(rows) {
+  let newest = "";
+  for (const row of rows) if (row.d > newest) newest = row.d;
+  return rows
+    .filter((row) => row.d === newest)
+    .reduce((total, row) => total + (row.n_stations || 0), 0);
+}
+
+// What the chart covers, said once rather than hovered for.
+function coverageNote(days, from, to, stations) {
+  const span = `${days} day${days === 1 ? "" : "s"}, ${from} to ${to}`;
+  return stations ? `${span} · ${stations} stations on the latest day.` : `${span}.`;
+}
+
 function dayText(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -1520,7 +1548,7 @@ viewof trendRegions = {
     options.map((entry) => entry[0]),
     {
       label: "Regions",
-      value: options.slice(0, 8).map((entry) => entry[0]),
+      value: options.slice(0, PALETTE_SERIES_CAP).map((entry) => entry[0]),
       format: (code) => {
         const found = options.find((entry) => entry[0] === code);
         return `${code} (${found ? found[1] : 0})`;
@@ -1577,7 +1605,7 @@ trendView = {
     if (!data.length) {
       return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
     }
-    const lastDay = Math.max(...data.map((row) => row.day.getTime()));
+    const days = [...new Set(data.map((row) => row.day.getTime()))].sort();
     const marks = [];
     if (showBand) {
       marks.push(
@@ -1599,15 +1627,23 @@ trendView = {
         stroke: (row) => COUNTRY_COLORS[row.country],
         strokeWidth: 2
       }),
-      Plot.dot(data, {
-        x: "day",
-        y: "median",
-        r: 2,
-        fill: (row) => COUNTRY_COLORS[row.country]
-      }),
+      ...(showDots(days.length)
+        ? [Plot.dot(data, {x: "day", y: "median", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
+        : []),
+      // selectLast per series, not "rows on the global last day": a country
+      // whose feed stalls loses its label under the second rule, and that is
+      // exactly the one worth naming. `z` is explicit because `stroke` is a
+      // function, and Plot cannot infer the series from it.
       Plot.text(
-        data.filter((row) => row.day.getTime() === lastDay),
-        {x: "day", y: "median", text: "country", dx: 14, fill: (row) => COUNTRY_COLORS[row.country]}
+        data,
+        Plot.selectLast({
+          x: "day",
+          y: "median",
+          z: "country",
+          text: "country",
+          dx: 14,
+          fill: (row) => COUNTRY_COLORS[row.country]
+        })
       ),
       // Last, so it paints over the country labels rather than under them.
       Plot.tip(
@@ -1623,7 +1659,7 @@ trendView = {
         })
       )
     );
-    return Plot.plot({
+    const figure = Plot.plot({
       height: 420,
       marginRight: 60,
       style: {background: "transparent", color: palette.text},
@@ -1631,6 +1667,12 @@ trendView = {
       y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
       marks
     });
+    return html`<div>${figure}<div class="cgp-notice">${coverageNote(
+      days.length,
+      dayText(new Date(days[0])),
+      dayText(new Date(days[days.length - 1])),
+      latestStationCount(trendCountryRows)
+    )}</div></div>`;
   }
 
   // One chart for every country, in either currency, because what it plots is a
@@ -1692,7 +1734,7 @@ trendView = {
       return html`<div class="cgp-notice">No values for ${GRADE_LABELS[grade]}.</div>`;
     }
     const baseText = dayText(baseDay);
-    const lastDay = Math.max(...data.map((row) => row.day.getTime()));
+    const days = [...new Set(data.map((row) => row.day.getTime()))].sort();
     const marks = [Plot.ruleY([0], {stroke: palette.grid})];
     if (showBand) {
       marks.push(
@@ -1717,10 +1759,19 @@ trendView = {
         stroke: (row) => COUNTRY_COLORS[row.country],
         strokeWidth: 2
       }),
-      Plot.dot(data, {x: "day", y: "pct", r: 2, fill: (row) => COUNTRY_COLORS[row.country]}),
+      ...(showDots(days.length)
+        ? [Plot.dot(data, {x: "day", y: "pct", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
+        : []),
       Plot.text(
-        data.filter((row) => row.day.getTime() === lastDay),
-        {x: "day", y: "pct", text: "country", dx: 14, fill: (row) => COUNTRY_COLORS[row.country]}
+        data,
+        Plot.selectLast({
+          x: "day",
+          y: "pct",
+          z: "country",
+          text: "country",
+          dx: 14,
+          fill: (row) => COUNTRY_COLORS[row.country]
+        })
       ),
       Plot.tip(
         data,
@@ -1757,7 +1808,12 @@ trendView = {
         ? `Each country's median converted to USD, then divided by its own value on ${baseText}.`
         : `Each country is divided by its own price on ${baseText}, in its own currency — nothing ` +
           `is converted, so the axis compares movement, never price.`;
-    return html`<div>${figure}<div class="cgp-notice">${note}${
+    return html`<div>${figure}<div class="cgp-notice">${coverageNote(
+      days.length,
+      dayText(new Date(days[0])),
+      dayText(new Date(days[days.length - 1])),
+      latestStationCount(trendCountryRows)
+    )} ${note}${
       showBand ? " The band is where the middle half of its stations sat, against the same starting point." : ""
     } Per gallon and per litre differ by a constant, so they draw the same lines here; Volume still sets the prices in the tooltip.</div></div>`;
   }
@@ -1872,7 +1928,13 @@ trendView = {
         ${figure}
       </div>`;
     }
-    const chosen = new Set(trendRegions);
+    // tableau10 has ten colors. Asked for more series than that, Plot cycles
+    // them silently and the legend then claims two regions are one -- five US
+    // states would share every color. Cap the drawn set and say so, rather than
+    // drawing a key that is not true.
+    const asked = trendRegions;
+    const drawn = asked.slice(0, PALETTE_SERIES_CAP);
+    const chosen = new Set(drawn);
     const data = trendRegionRows
       .filter((row) => chosen.has(row.region))
       .map((row) => ({
@@ -1885,7 +1947,7 @@ trendView = {
       }))
       .filter((row) => row.median != null);
     if (!data.length) return html`<div class="cgp-notice">Pick at least one region.</div>`;
-    return Plot.plot({
+    const figure = Plot.plot({
       height: 420,
       marginRight: 80,
       style: {background: "transparent", color: palette.text},
@@ -1910,6 +1972,11 @@ trendView = {
         )
       ]
     });
+    if (asked.length <= drawn.length) return figure;
+    return html`<div>${figure}<div class="cgp-notice">Showing the first
+      ${drawn.length} of ${asked.length} regions you picked: the palette has
+      ${PALETTE_SERIES_CAP} colors, and beyond that two regions would share
+      one. Separate charts shows them all.</div></div>`;
   }
 
   if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;

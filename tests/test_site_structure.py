@@ -242,3 +242,30 @@ def test_compare_keeps_the_table_helper_as_a_fallback():
     """compareTableEl is no longer reached, but it is the right answer if the
     local chart is ever cut, and it costs nothing to keep."""
     assert "function compareTableEl()" in read_qmd()
+
+
+def test_series_are_capped_to_the_palette():
+    """tableau10 has ten colors; asked for more, Plot cycles them silently and
+    the legend then claims two regions are the same one."""
+    text = read_qmd()
+    assert "PALETTE_SERIES_CAP = 10" in text
+    assert "drawn = asked.slice(0, PALETTE_SERIES_CAP)" in text
+    # The default checked set respects the cap rather than hardcoding a number.
+    assert "options.slice(0, PALETTE_SERIES_CAP)" in text
+
+
+def test_line_ends_are_labelled_per_series():
+    """Filtering on the global last day drops the label of any series whose feed
+    stalled -- the one most worth naming."""
+    text = read_qmd()
+    assert "Plot.selectLast(" in text
+    # `z` must be explicit: with `stroke` a function Plot infers no series and
+    # labels exactly one line.
+    for block in text.split("Plot.selectLast({")[1:]:
+        assert 'z: "country"' in block.split("})")[0]
+
+
+def test_dots_stand_down_once_they_stop_marking_anything():
+    text = read_qmd()
+    assert "function showDots(" in text
+    assert "showDots(days.length)" in text
