@@ -1,12 +1,12 @@
 # Costco Gas Prices — Dashboard
 
 The Quarto site behind
-<https://dashboard.thecoatlessprofessor.com/costco-gas-prices/>: posted fuel prices at
+<https://dashboard.thecoatlessprofessor.com/club-gas-prices/>: posted fuel prices at
 every Costco gas station in the United States, Canada, Mexico, the United Kingdom,
 Australia, Japan and Taiwan.
 
 This repository holds the site only. The prices are collected and published by
-[coatless-datasets/costco-gas-prices](https://github.com/coatless-datasets/costco-gas-prices),
+[coatless-datasets/club-gas-prices](https://github.com/coatless-datasets/club-gas-prices),
 and that is where the dataset, its schema and its release history live.
 
 > [!IMPORTANT]
@@ -65,7 +65,7 @@ Frankfurter reference rates of 2026-09-14 — enough to render every page and to
 test them. To work against the live data instead:
 
 ```bash
-gh release download current -R coatless-datasets/costco-gas-prices \
+gh release download current -R coatless-datasets/club-gas-prices \
   -D site/data --pattern 'site-*'
 python3 .github/verify-site-data.py site/data
 ```
@@ -102,9 +102,9 @@ uv run python tests/smoke/smoke_site.py _site
 Two things in this repository restate something the data repository owns, because the
 code that produces them lives there:
 
-- `.github/verify-site-data.py` names the five assets — `costco_gas.sitedata.SITE_ASSETS`.
+- `.github/verify-site-data.py` names the five assets — `club_gas.sitedata.SITE_ASSETS`.
 - `tests/test_site_sample.py` names the parquet columns the pages query —
-  `costco_gas.sitedata.HISTORY_COLUMNS` and `SUMMARY_COLUMNS`.
+  `club_gas.sitedata.HISTORY_COLUMNS` and `SUMMARY_COLUMNS`.
 
 Both are commented as such on both sides. A column added there without a change here
 renders a page against a shape it never receives, and `test_site_sample.py` is what

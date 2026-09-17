@@ -28,7 +28,7 @@ def site(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def base_url(site: Path):
-    httpd, url = serve(site, "/costco-gas-prices/")
+    httpd, url = serve(site, "/club-gas-prices/")
     try:
         yield url
     finally:
@@ -106,7 +106,7 @@ def test_unsatisfiable_range_gets_416(base_url: str):
 
 
 def test_paths_outside_the_prefix_and_the_root_are_404(base_url: str):
-    origin = base_url[: base_url.index("/costco-gas-prices/")]
+    origin = base_url[: base_url.index("/club-gas-prices/")]
     assert httpx.get(origin + "/index.html").status_code == 404
     assert httpx.get(base_url + "missing.json").status_code == 404
     assert httpx.get(base_url + "../../etc/hosts").status_code == 404

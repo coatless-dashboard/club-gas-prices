@@ -16,7 +16,7 @@ import json
 import pathlib
 import sys
 
-# Kept in step with costco_gas.sitedata.SITE_ASSETS in the data repository.
+# Kept in step with club_gas.sitedata.SITE_ASSETS in the data repository.
 SITE_ASSETS = {
     "meta.json": "site-meta.json",
     "latest.json": "site-latest.json",

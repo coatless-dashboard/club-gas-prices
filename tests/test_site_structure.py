@@ -38,8 +38,8 @@ def test_the_project_declares_a_website_and_both_themes():
 def test_the_navbar_links_the_repository_and_the_data():
     config = CONFIG.read_text(encoding="utf-8")
     # This site's own source, and the collector whose releases it reads.
-    assert "https://github.com/coatless-dashboard/costco-gas-prices" in config
-    assert "https://github.com/coatless-datasets/costco-gas-prices/releases" in config
+    assert "https://github.com/coatless-dashboard/club-gas-prices" in config
+    assert "https://github.com/coatless-datasets/club-gas-prices/releases" in config
     assert "releases/tag/current" in config
 
 
@@ -322,18 +322,31 @@ def test_dots_stand_down_once_they_stop_marking_anything():
 
 def test_the_sample_uses_keys_the_pipeline_would_emit():
     """A sample key the collector could never produce ends up in a URL somebody
-    shares. MX and TW are keyed on the warehouse number, not the branch name."""
-    import json as _json
+    shares -- and the site then renders against a shape it will never receive.
 
-    sample = (ROOT / "tests" / "fixtures" / "site_sample.py").read_text()
-    for wrong in ('"MX-Mexicali"', '"TW-Chungli"'):
-        assert wrong not in sample, wrong
-    data = ROOT / "site" / "data" / "stations.json"
-    if data.exists():
-        for row in _json.loads(data.read_text()):
-            country, _, rest = row["station_key"].partition("-")
-            if country in ("MX", "TW", "AU"):
-                assert rest.isdigit(), f"{row['station_key']} is not a warehouse number"
+    This reads the fixture's own station list rather than site/data/, which is
+    gitignored: the previous version guarded on `if data.exists()` and so never
+    executed in CI, which is how the pre-brand key format survived a rename.
+    """
+    import re as _re
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "fixtures"))
+    from site_sample import STATIONS
+
+    assert STATIONS, "the sample has no stations"
+    for station in STATIONS:
+        key = station["station_key"]
+        parts = key.split("-")
+        assert len(parts) == 3, f"{key} is not <COUNTRY>-<BRAND>-<id>"
+        country, brand, sid = parts
+        assert _re.fullmatch(r"[A-Z]{2}", country), key
+        assert _re.fullmatch(r"[A-Z0-9]+", brand), key
+        assert station["country"] == country, key
+        assert station["brand"] == brand, key
+        # MX, TW and AU are keyed on the warehouse number, not the branch name.
+        if country in ("MX", "TW", "AU"):
+            assert sid.isdigit(), f"{key} is not a warehouse number"
 
 
 def test_object_constants_use_the_block_form():

@@ -24,7 +24,7 @@ if str(HERE) not in sys.path:
 
 from range_server import serve  # noqa: E402
 
-PREFIX = "/costco-gas-prices/"
+PREFIX = "/club-gas-prices/"
 # One document per view now, so a page is a URL rather than a tab pane.
 PAGES = ["index.html", "compare.html", "trends.html", "station.html", "about.html"]
 GRADES = ["regular", "premium", "diesel"]

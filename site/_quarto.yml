@@ -20,10 +20,10 @@ website:
     right:
       # Two repositories: this site, and the collector whose releases it reads.
       - icon: github
-        href: https://github.com/coatless-dashboard/costco-gas-prices
+        href: https://github.com/coatless-dashboard/club-gas-prices
         aria-label: "This site's source on GitHub"
       - icon: database
-        href: https://github.com/coatless-datasets/costco-gas-prices/releases/tag/current
+        href: https://github.com/coatless-datasets/club-gas-prices/releases/tag/current
         aria-label: "Download the data"
 
 format:

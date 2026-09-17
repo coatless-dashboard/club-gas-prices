@@ -16,7 +16,7 @@ from pathlib import Path
 
 import polars as pl
 
-# Kept in step with costco_gas.sitedata.with_change_flags in the data
+# Kept in step with club_gas.sitedata.with_change_flags in the data
 # repository. It is copied rather than imported because this repository holds
 # no pipeline: the sample has to carry the same `changed` and `moved_intraday`
 # columns the real history.parquet does, or the station page's change list
@@ -65,32 +65,36 @@ NOTICE = (
     "from the price at the pump."
 )
 
-RELEASE_DL = "https://github.com/coatless-datasets/costco-gas-prices/releases/download/current/"
+RELEASE_DL = "https://github.com/coatless-datasets/club-gas-prices/releases/download/current/"
 
 # fmt: off
 STATIONS = [
     {
-        "station_key": "US-1364", "country": "US", "name": "Bradenton", "name_local": None,
+        "station_key": "US-COSTCO-1364", "country": "US",
+        "brand": "COSTCO", "name": "Bradenton", "name_local": None,
         "address": "5311 CORTEZ RD W", "postcode": "34210", "alt_id": None,
         "city": "BRADENTON", "region": "FL", "lat": 27.49462445, "lon": -82.47014406,
         "price_unit": "USD/gal", "currency": "USD",
         "prices": [("regular", "regular", "3.999"), ("premium", "premium", "4.629")],
     },
     {
-        "station_key": "US-140", "country": "US", "name": "Kona", "name_local": None,
+        "station_key": "US-COSTCO-140", "country": "US",
+        "brand": "COSTCO", "name": "Kona", "name_local": None,
         "city": "KAILUA KONA", "region": "HI", "lat": 19.68545677, "lon": -156.0168782,
         "price_unit": "USD/gal", "currency": "USD",
         "prices": [("regular", "regular", "4.899"), ("premium", "premium", "5.699"),
                    ("diesel", "diesel", "6.899"), ("clear", "other", "5.699")],
     },
     {
-        "station_key": "US-335", "country": "US", "name": "Carolina", "name_local": None,
+        "station_key": "US-COSTCO-335", "country": "US",
+        "brand": "COSTCO", "name": "Carolina", "name_local": None,
         "city": "SAN JUAN", "region": "PR", "lat": 18.39974101, "lon": -65.99743872,
         "price_unit": "USD/L", "currency": "USD",
         "prices": [("regular", "regular", "1.097"), ("premium", "premium", "1.267")],
     },
     {
-        "station_key": "CA-530", "country": "CA", "name": "N London", "name_local": None,
+        "station_key": "CA-COSTCO-530", "country": "CA",
+        "brand": "COSTCO", "name": "N London", "name_local": None,
         "address": "1685 WONDERLAND RD N", "postcode": "N6G 4W8", "alt_id": None,
         "city": "LONDON", "region": "ON", "lat": 42.987, "lon": -81.293,
         "price_unit": "CAD/L", "currency": "CAD",
@@ -98,21 +102,24 @@ STATIONS = [
                    ("diesel", "diesel", "2.279")],
     },
     {
-        "station_key": "CA-1213", "country": "CA", "name": "Vaudreuil", "name_local": None,
+        "station_key": "CA-COSTCO-1213", "country": "CA",
+        "brand": "COSTCO", "name": "Vaudreuil", "name_local": None,
         "city": "VAUDREUIL-DORION", "region": "QC", "lat": 45.415, "lon": -74.038,
         "price_unit": "CAD/L", "currency": "CAD",
         "prices": [("regular", "regular", "1.799"), ("premium", "premium", "1.999"),
                    ("diesel", "diesel", "2.649")],
     },
     {
-        "station_key": "MX-750", "country": "MX", "name": "Mexicali", "name_local": None,
+        "station_key": "MX-COSTCO-750", "country": "MX",
+        "brand": "COSTCO", "name": "Mexicali", "name_local": None,
         "address": "Calzada Cetys 2600", "postcode": "21376", "alt_id": "Mexicali",
         "city": "Mexicali", "region": "BCN", "lat": 32.60663671, "lon": -115.4343584,
         "price_unit": "MXN/L", "currency": "MXN",
         "prices": [("Regular", "regular", "$20.89"), ("Premium", "premium", "$25.39")],
     },
     {
-        "station_key": "GB-Coventry", "country": "GB", "name": "Coventry", "name_local": None,
+        "station_key": "GB-COSTCO-Coventry", "country": "GB",
+        "brand": "COSTCO", "name": "Coventry", "name_local": None,
         "address": "Brandon Road", "postcode": "CV3 2AA", "alt_id": "coventry",
         "city": "Coventry", "region": None, "lat": 52.398583, "lon": -1.560788,
         "price_unit": "GBp/L", "currency": "GBP",
@@ -120,7 +127,8 @@ STATIONS = [
                    ("5303", "diesel", "184.9")],
     },
     {
-        "station_key": "AU-109", "country": "AU", "name": "Marsden Park", "name_local": None,
+        "station_key": "AU-COSTCO-109", "country": "AU",
+        "brand": "COSTCO", "name": "Marsden Park", "name_local": None,
         "address": "10 Marsden Park Rd", "postcode": "2765", "alt_id": "Marsden Park",
         "city": "Marsden Park", "region": "NSW", "lat": -33.72141, "lon": 150.839951,
         "price_unit": "AUD/L", "currency": "AUD",
@@ -128,7 +136,8 @@ STATIONS = [
                    ("Diesel", "diesel", "$2.527")],
     },
     {
-        "station_key": "JP-Tomiya", "country": "JP", "name": "Tomiya", "name_local": "富谷",
+        "station_key": "JP-COSTCO-Tomiya", "country": "JP",
+        "brand": "COSTCO", "name": "Tomiya", "name_local": "富谷",
         "address": "1-1 Narita", "postcode": "981-3341", "alt_id": "costcoJapanTomiyaWarehouse",
         "city": "富谷市", "region": "宮城県", "lat": 38.39, "lon": 140.88,
         "price_unit": "JPY/L", "currency": "JPY",
@@ -136,7 +145,8 @@ STATIONS = [
                    ("Diesel", "diesel", "¥135"), ("Kerosene", "other", "¥124")],
     },
     {
-        "station_key": "TW-010", "country": "TW", "name": "Chungli",
+        "station_key": "TW-COSTCO-010", "country": "TW",
+        "brand": "COSTCO", "name": "Chungli",
         "address": "No. 1 Zhongli Rd", "postcode": "320", "alt_id": "costcoTaiwanWarehouse010",
         "name_local": "桃園中壢店", "city": None, "region": "桃園市",
         "lat": 24.9636189, "lon": 121.1558083,
@@ -271,6 +281,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
                         "capture_date": day,
                         "station_key": station["station_key"],
                         "country": station["country"],
+                        "brand": station["brand"],
                         "region": station["region"],
                         "grade": grade,
                         "price_local_per_litre": round(per_litre, 4),
@@ -294,6 +305,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         [
             "capture_date",
             "station_key",
+            "brand",
             "grade",
             "price_local_per_litre",
             "price_usd_per_litre",
@@ -317,6 +329,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
     columns = [
         "capture_date",
         "country",
+        "brand",
         "level",
         "region",
         "grade",
@@ -330,18 +343,18 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         "p75_usd_per_litre",
     ]
     by_country = (
-        history.group_by(["capture_date", "country", "grade"])
+        history.group_by(["capture_date", "country", "brand", "grade"])
         .agg(aggs)
         .with_columns(level=pl.lit("country"), region=pl.lit(None, dtype=pl.String))
     )
     by_region = (
         history.filter(pl.col("region").is_not_null())
-        .group_by(["capture_date", "country", "region", "grade"])
+        .group_by(["capture_date", "country", "brand", "region", "grade"])
         .agg(aggs)
         .with_columns(level=pl.lit("region"))
     )
     summary = pl.concat([by_country.select(columns), by_region.select(columns)]).sort(
-        ["country", "level", "region", "grade", "capture_date"]
+        ["country", "brand", "level", "region", "grade", "capture_date"]
     )
     summary.write_parquet(out_dir / "summary_daily.parquet", statistics=True)
 
@@ -355,16 +368,16 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         "grades": GRADE_TABLE,
         "releases": {
             "current": (
-                "https://github.com/coatless-datasets/costco-gas-prices/releases/tag/current"
+                "https://github.com/coatless-datasets/club-gas-prices/releases/tag/current"
             ),
-            "all": "https://github.com/coatless-datasets/costco-gas-prices/releases",
+            "all": "https://github.com/coatless-datasets/club-gas-prices/releases",
             # sitedata also emits one download URL per `current` asset; the page links
             # only `current` and `all`, but the fixture carries them so it stays
             # substitutable for real meta.json.
-            "all_parquet": RELEASE_DL + "costco-gas-all.parquet",
-            "all_csv_gz": RELEASE_DL + "costco-gas-all.csv.gz",
-            "all_captures_parquet": RELEASE_DL + "costco-gas-all-captures.parquet",
-            "latest_csv": RELEASE_DL + "costco-gas-latest.csv",
+            "all_parquet": RELEASE_DL + "club-gas-all.parquet",
+            "all_csv_gz": RELEASE_DL + "club-gas-all.csv.gz",
+            "all_captures_parquet": RELEASE_DL + "club-gas-all-captures.parquet",
+            "latest_csv": RELEASE_DL + "club-gas-latest.csv",
             "stations_csv": RELEASE_DL + "stations.csv",
             "fx_csv": RELEASE_DL + "fx.csv",
         },

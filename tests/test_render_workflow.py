@@ -62,8 +62,8 @@ def test_render_only_reads_the_data_repository():
     """This repository holds no capture code and must never be given a writer token."""
     text = read()
     assert text.startswith("name: Render\n")
-    assert "DATA_REPO: coatless-datasets/costco-gas-prices" in text
-    assert "COSTCO_GAS_WRITER" not in text
+    assert "DATA_REPO: coatless-datasets/club-gas-prices" in text
+    assert "CLUB_GAS_WRITER" not in text
     assert "permissions:\n  contents: read\n" in text
     # A GITHUB_TOKEN cannot start a workflow across repositories, so the render
     # polls. Reading a public repository's releases needs no token of its own.
@@ -128,7 +128,7 @@ def write_release(directory: Path) -> None:
         assets[name] = {"sha256": hashlib.sha256(body).hexdigest(), "size": len(body)}
     # The real manifest also covers the six raw dataset assets, which this
     # repository neither downloads nor verifies.
-    assets["costco-gas-all.parquet"] = {"sha256": "0" * 64, "size": 1}
+    assets["club-gas-all.parquet"] = {"sha256": "0" * 64, "size": 1}
     (directory / "manifest.json").write_text(json.dumps({"assets": assets}), encoding="utf-8")
 
 
@@ -175,7 +175,7 @@ def test_verify_rejects_a_release_that_predates_the_site_assets(tmp_path):
     (tmp_path / "data").mkdir()
     write_release(tmp_path / "data")
     (tmp_path / "data" / "manifest.json").write_text(
-        json.dumps({"assets": {"costco-gas-all.parquet": {"sha256": "0" * 64, "size": 1}}}),
+        json.dumps({"assets": {"club-gas-all.parquet": {"sha256": "0" * 64, "size": 1}}}),
         encoding="utf-8",
     )
     done = run_verify(tmp_path)

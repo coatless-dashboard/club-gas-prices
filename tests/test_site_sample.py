@@ -16,6 +16,7 @@ from site_sample import build  # noqa: E402
 SUMMARY_COLUMNS = [
     "capture_date",
     "country",
+    "brand",
     "level",
     "region",
     "grade",
@@ -30,11 +31,12 @@ SUMMARY_COLUMNS = [
 ]
 # The two parquet schemas the pages query, restated here because the code that
 # writes the real ones lives in the data repository. This is the seam: if
-# `costco_gas.sitedata` ever changes a column, this file is what has to change
+# `club_gas.sitedata` ever changes a column, this file is what has to change
 # with it, and these two tests are what fail if it does not.
 HISTORY_COLUMNS = [
     "capture_date",
     "station_key",
+    "brand",
     "grade",
     "price_local_per_litre",
     "price_usd_per_litre",
@@ -68,18 +70,18 @@ def test_latest_keeps_the_published_value_and_both_conversions(tmp_path: Path):
     latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
     by_key = {row["station_key"]: row for row in latest}
 
-    bradenton = by_key["US-1364"]["grades"]["regular"]
+    bradenton = by_key["US-COSTCO-1364"]["grades"]["regular"]
     assert bradenton["price_raw"] == "3.999"
     assert bradenton["price_unit"] == "USD/gal"
     assert bradenton["price_usd_per_gallon"] == 3.999  # USD/gal rows keep the published value
     assert bradenton["price_local_per_litre"] == round(3.999 / 3.785411784, 4)
 
-    coventry = by_key["GB-Coventry"]["grades"]["regular"]
+    coventry = by_key["GB-COSTCO-Coventry"]["grades"]["regular"]
     assert coventry["price_raw"] == "160.9"
     assert coventry["price_unit"] == "GBp/L"
     assert coventry["price_local_per_litre"] == 1.609  # pence to pounds
 
-    tomiya = by_key["JP-Tomiya"]
+    tomiya = by_key["JP-COSTCO-Tomiya"]
     assert tomiya["name_local"] == "富谷"
     assert tomiya["grades"]["regular"]["price_raw"] == "¥149"
     assert "Kerosene" in tomiya["other"]  # non-comparable grades stay out of `grades`

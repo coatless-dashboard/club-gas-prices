@@ -172,7 +172,7 @@ def serve(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Range-capable static file server")
     parser.add_argument("--dir", default="_site", help="directory to serve")
-    parser.add_argument("--prefix", default="/costco-gas-prices/", help="URL prefix")
+    parser.add_argument("--prefix", default="/club-gas-prices/", help="URL prefix")
     parser.add_argument("--port", type=int, default=8080, help="port (0 picks a free one)")
     args = parser.parse_args()
     httpd, base_url = serve(args.dir, args.prefix, args.port, verbose=True)

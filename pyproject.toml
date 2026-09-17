@@ -1,5 +1,5 @@
 [project]
-name = "costco-gas-prices-dashboard"
+name = "club-gas-prices-dashboard"
 version = "0.1.0"
 description = "A Quarto site for Costco fuel prices, rendered from the coatless-datasets release."
 readme = "README.md"

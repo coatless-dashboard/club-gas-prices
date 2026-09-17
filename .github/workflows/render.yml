@@ -25,9 +25,9 @@ permissions:
   id-token: write
 
 env:
-  DATA_REPO: coatless-datasets/costco-gas-prices
+  DATA_REPO: coatless-datasets/club-gas-prices
   # The org-level Pages domain serves this repository under its own name.
-  SITE_URL: https://dashboard.thecoatlessprofessor.com/costco-gas-prices
+  SITE_URL: https://dashboard.thecoatlessprofessor.com/club-gas-prices
 
 jobs:
   render:

@@ -83,7 +83,7 @@ def test_expected_usd_countries_counts_countries_not_stations():
 
 def test_only_errors_from_the_site_origin_count():
     origin = "http://127.0.0.1:8123"
-    assert is_site_console_error("error", origin + "/costco-gas-prices/index.html", origin)
+    assert is_site_console_error("error", origin + "/club-gas-prices/index.html", origin)
     assert is_site_console_error("error", "", origin)
     # Warnings, CDN scripts and the favicon Chrome asks for are all ignored.
     assert not is_site_console_error("warning", origin + "/x", origin)
