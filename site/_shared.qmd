@@ -606,6 +606,20 @@ function priceChanges(rows, limit = 30) {
   return out.slice(0, limit);
 }
 
+// What a station's status means, in words. A station is never removed from the
+// record once seen, so every one of these describes a station that is still
+// here with all of its history -- only its listing has changed.
+function statusSentence(meta) {
+  if (!meta) return "";
+  if (meta.status === "closed") {
+    return "Costco has not listed it for long enough that we call it closed; its history is kept.";
+  }
+  if (meta.status === "missing") {
+    return "Costco is not listing it right now. That is often a brief gap rather than a closure.";
+  }
+  return "Currently listed.";
+}
+
 // The rate the USD column was converted at, stored with the reading rather than
 // looked up now, so the figure shown is the one the conversion used. A station
 // that prices in USD has nothing to convert and says so.

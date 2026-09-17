@@ -361,3 +361,14 @@ def test_directions_prefer_coordinates():
     body = text.split("function directionsUrl(", 1)[1].split("\n}", 1)[0]
     assert "maps/dir/?api=1&destination=" in body
     assert body.index("meta.lat") < body.index("meta.address")
+
+
+def test_the_site_explains_what_a_station_status_means():
+    """A station is never removed once seen, so every status describes a station
+    that is still here with all its history; only its listing changed."""
+    text = read_qmd()
+    assert "function statusSentence(meta)" in text
+    assert 'meta.status === "closed"' in text
+    assert 'meta.status === "missing"' in text
+    # Not listed right now is not the same claim as closed.
+    assert "often a brief gap rather than a closure" in text

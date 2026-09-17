@@ -38,7 +38,9 @@ stationResults = {
     const suffix =
       row.status === "active"
         ? ""
-        : ` · last seen ${String(row.last_seen_utc || "").slice(0, 10)}`;
+        : ` · ${row.status === "closed" ? "closed" : "not listed"}, last seen ${String(
+            row.last_seen_utc || ""
+          ).slice(0, 10)}`;
     const button = html`<button type="button" data-station-key=${row.station_key}>${row.name}${
       row.name_local ? ` (${row.name_local})` : ""
     } — ${[row.city, row.region, row.country].filter((v) => v).join(", ")}${suffix}</button>`;
@@ -241,8 +243,8 @@ stationDetail = {
       <tbody>${rows}</tbody>
     </table>
     <div class="cgp-notice">First seen ${String(selectedMeta.first_seen_utc || "").slice(0, 10)},
-      last seen ${String(selectedMeta.last_seen_utc || "").slice(0, 10)},
-      status ${selectedMeta.status}.</div>
+      last seen ${String(selectedMeta.last_seen_utc || "").slice(0, 10)}.
+      ${statusSentence(selectedMeta)}</div>
     ${rateNote(selectedLatest)}
     ${links}
     ${stationLinksEl(selectedMeta)}
