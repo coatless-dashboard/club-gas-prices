@@ -5,12 +5,11 @@ on:
   # workflow across repositories, so this polls rather than being pushed to.
   # Reading a public repository's releases needs no token of its own, which is
   # the whole reason to poll instead of holding a PAT here.
-  # Uncomment once the collector has published a `current` release.
   # Capture runs at :17 every six hours. This sits 33 minutes later so a render
   # never lands while `current` is being rewritten asset by asset, at the same
   # ~90 minute average freshness a :20 offset would give.
-  # schedule:
-  #   - cron: "50 */3 * * *"
+  schedule:
+    - cron: "50 */3 * * *"
   push:
     branches: [main]
     paths:

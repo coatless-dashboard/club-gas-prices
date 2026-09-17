@@ -213,3 +213,6 @@ def test_the_render_cron_does_not_land_inside_a_publish():
     text = read()
     assert '# - cron: "20 */3 * * *"' not in text.replace("  #", "#")
     assert '"50 */3 * * *"' in text
+    # And it is actually on: the block ships commented out until the collector
+    # has a `current` release to render, which is easy to leave that way.
+    assert re.search(r'(?m)^  schedule:\n    - cron: "50 \*/3 \* \* \*"$', text)
