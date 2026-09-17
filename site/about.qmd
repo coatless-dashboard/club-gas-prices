@@ -19,7 +19,6 @@ pageWantsDb = false
 
 ```{ojs}
 aboutHeader = html`<div>
-  <p>${meta.notice}</p>
   <p class="cgp-notice">Built ${meta.built_at_utc} from capture ${meta.capture_id}.
     Data: <a href=${meta.releases.current}>current release</a> ·
     <a href=${meta.releases.all}>all releases</a> ·
@@ -28,10 +27,10 @@ aboutHeader = html`<div>
 </div>`
 ```
 
-Prices are read from Costco's own public websites four times a day and stored by
-UTC day. Every row keeps the published value, the unit it was published in, and
-the exchange rate in force when it was collected, so a past day always shows the
-USD value of that day.
+Prices are read from each chain's own public website every four hours while a
+station is open, and stored by UTC day. Every row keeps the published value, its
+unit, and the exchange rate in force when it was collected, so a past day shows
+the USD value of that day.
 
 | Country | Endpoint, one request unless noted |
 |---|---|
@@ -50,11 +49,12 @@ USD value of that day.
 
 ```{ojs}
 aboutGrades = html`<table class="cgp-table">
-  <thead><tr><th>Country</th><th>Source label</th><th>Grade</th><th>Spec</th>
-    <th>Stated by</th></tr></thead>
+  <thead><tr><th>Country</th><th>Chain</th><th>Source label</th><th>Grade</th>
+    <th>Spec</th><th>Stated by</th></tr></thead>
   <tbody>${(meta.grades || []).map(
     (row) => html`<tr>
       <td>${COUNTRY_NAMES[row.country] || row.country}</td>
+      <td>${BRAND_NAMES[row.brand] || row.brand || ""}</td>
       <td>${row.grade_raw}</td>
       <td>${row.grade}</td>
       <td>${row.spec || "—"}</td>
@@ -70,9 +70,10 @@ aboutGrades = html`<table class="cgp-table">
 </table>`
 ```
 
-Grades are not equivalent across countries. Where a source states no octane or
-blend the specification is blank; where it comes from a third party it is marked
-`reported` and links to that source.
+Grades are not equivalent across countries. UK and Australian diesel is premium
+diesel, and these are one chain's posted prices, not national averages. Where a
+source states no octane or blend the specification is blank; where it comes from
+a third party it is marked `reported` and links to that source.
 
 :::
 

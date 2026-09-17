@@ -18,6 +18,22 @@ pageWantsDb = true
 //| output: false
 mixedCurrency = currency === "Local" && trendCountry === "All countries"
 effectiveTrendMode = mixedCurrency && trendMode === "price" ? "change" : trendMode
+// Per gallon and per litre differ by a constant, so on a percentage axis they
+// draw the same lines. Dimmed rather than explained in a sentence under the
+// chart; it still sets the prices in the tooltip, which is why it is not
+// disabled outright.
+volumeGuard = {
+  const inert = effectiveTrendMode === "change";
+  for (const input of (viewof volume).querySelectorAll("input")) {
+    const label = input.closest("label");
+    if (label) {
+      label.title = inert ? "A percentage axis is the same per gallon and per litre" : "";
+      label.classList.toggle("cgp-option-off", inert);
+    }
+  }
+  return inert;
+}
+
 trendModeGuard = {
   const input = (viewof trendMode).querySelector('input[data-value="price"]');
   if (input) {
@@ -72,7 +88,7 @@ viewof trendCountry = asField(
 ```{ojs}
 //| output: false
 viewof showBand = asField(
-  Inputs.toggle({label: "Show the p25–p75 band", value: true}),
+  Inputs.toggle({label: "Band: middle half of stations", value: true}),
   {inline: true}
 )
 ```
@@ -355,19 +371,12 @@ trendView = {
       y: {label, grid: true, nice: true, tickFormat: fmtPct},
       marks
     });
-    const note =
-      currency === "USD"
-        ? `Each country's median converted to USD, then divided by its own value on ${baseText}.`
-        : `Each country is divided by its own price on ${baseText}, in its own currency — nothing ` +
-          `is converted, so the axis compares movement, never price.`;
     return html`<div>${figure}<div class="cgp-notice">${coverageNote(
       days.length,
       dayText(new Date(days[0])),
       dayText(new Date(days[days.length - 1])),
       latestStationCount(trendCountryRows)
-    )} ${note}${
-      showBand ? " The band is where the middle half of its stations sat, against the same starting point." : ""
-    } Per gallon and per litre differ by a constant, so they draw the same lines here; Volume still sets the prices in the tooltip.</div></div>`;
+    )}</div></div>`;
   }
 
   function allCountriesLocal() {

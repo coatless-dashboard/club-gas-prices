@@ -304,11 +304,7 @@ compareNotes = {
     .map((row) => COUNTRY_NAMES[row.country]);
   return html`<div class="cgp-notice">
     ${notSold.length ? html`<div>Not sold: ${notSold.join(", ")}.</div>` : ""}
-    <div>Each country shows its own newest day with stations; an older day is marked stale.</div>
-    <div>The station count is the stations that posted a ${GRADE_LABELS[grade]} price that day —
-      not every warehouse, and not stations selling only another grade.</div>
-    <div>Grades are not equivalent across countries: see the grade table on the About page.
-      UK and Australian diesel is premium diesel. Costco prices are not national averages.</div>
+    <div>Grades differ by country — see the <a href="about.html">grade table</a>.</div>
   </div>`;
 }
 ```

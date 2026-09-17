@@ -159,7 +159,6 @@ markerLayerUpdate = {
 }
 ```
 
-## Color and countries
 ::: {.cgp-panel .cgp-controls-card}
 
 ```{ojs}
@@ -220,7 +219,6 @@ html`<div class="cgp-map-controls">
 :::
 
 
-## Stations
 ::: {.cgp-panel}
 
 ```{ojs}

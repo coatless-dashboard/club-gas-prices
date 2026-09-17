@@ -292,12 +292,11 @@ stationChanges = {
   });
   return html`<div>
     <table class="cgp-table">
-      <thead><tr><th>Day</th><th>Grade</th><th class="cgp-num">From</th>
+      <thead><tr><th>First seen</th><th>Grade</th><th class="cgp-num">From</th>
         <th class="cgp-num">To</th><th class="cgp-num">Change</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="cgp-notice">The day a new price was first seen, not necessarily the day it
-      changed: a station is read a few times a day, and only while it is open.</div>
+
   </div>`;
 }
 ```
