@@ -28,15 +28,9 @@ SUMMARY_COLUMNS = [
     "p25_usd_per_litre",
     "p75_usd_per_litre",
 ]
-HISTORY_COLUMNS = [
-    "capture_date",
-    "station_key",
-    "grade",
-    "price_local_per_litre",
-    "price_usd_per_litre",
-    "currency",
-    "n_captures",
-]
+# Imported rather than restated: a second copy of this list is how the sample
+# and the real build come to disagree about what the page can query.
+from costco_gas.sitedata import HISTORY_COLUMNS  # noqa: E402
 
 
 def test_build_writes_the_five_files(tmp_path: Path):

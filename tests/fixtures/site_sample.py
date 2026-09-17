@@ -11,11 +11,12 @@ locally.
 from __future__ import annotations
 
 import json
-import math
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+
+from costco_gas.sitedata import with_change_flags
 
 LITRES_PER_GALLON = 3.785411784
 
@@ -43,6 +44,7 @@ RELEASE_DL = "https://github.com/coatless-dashboard/costco-gas-prices/releases/d
 STATIONS = [
     {
         "station_key": "US-1364", "country": "US", "name": "Bradenton", "name_local": None,
+        "address": "5311 CORTEZ RD W", "postcode": "34210", "alt_id": None,
         "city": "BRADENTON", "region": "FL", "lat": 27.49462445, "lon": -82.47014406,
         "price_unit": "USD/gal", "currency": "USD",
         "prices": [("regular", "regular", "3.999"), ("premium", "premium", "4.629")],
@@ -62,6 +64,7 @@ STATIONS = [
     },
     {
         "station_key": "CA-530", "country": "CA", "name": "N London", "name_local": None,
+        "address": "1685 WONDERLAND RD N", "postcode": "N6G 4W8", "alt_id": None,
         "city": "LONDON", "region": "ON", "lat": 42.987, "lon": -81.293,
         "price_unit": "CAD/L", "currency": "CAD",
         "prices": [("regular", "regular", "1.739"), ("premium", "premium", "1.969"),
@@ -76,12 +79,14 @@ STATIONS = [
     },
     {
         "station_key": "MX-750", "country": "MX", "name": "Mexicali", "name_local": None,
+        "address": "Calzada Cetys 2600", "postcode": "21376", "alt_id": "Mexicali",
         "city": "Mexicali", "region": "BCN", "lat": 32.60663671, "lon": -115.4343584,
         "price_unit": "MXN/L", "currency": "MXN",
         "prices": [("Regular", "regular", "$20.89"), ("Premium", "premium", "$25.39")],
     },
     {
         "station_key": "GB-Coventry", "country": "GB", "name": "Coventry", "name_local": None,
+        "address": "Brandon Road", "postcode": "CV3 2AA", "alt_id": "coventry",
         "city": "Coventry", "region": None, "lat": 52.398583, "lon": -1.560788,
         "price_unit": "GBp/L", "currency": "GBP",
         "prices": [("5301", "regular", "160.9"), ("5302", "premium", "169.9"),
@@ -89,6 +94,7 @@ STATIONS = [
     },
     {
         "station_key": "AU-109", "country": "AU", "name": "Marsden Park", "name_local": None,
+        "address": "10 Marsden Park Rd", "postcode": "2765", "alt_id": "Marsden Park",
         "city": "Marsden Park", "region": "NSW", "lat": -33.72141, "lon": 150.839951,
         "price_unit": "AUD/L", "currency": "AUD",
         "prices": [("E10", "regular", "$2.127"), ("Premium 98", "premium", "$2.327"),
@@ -96,6 +102,7 @@ STATIONS = [
     },
     {
         "station_key": "JP-Tomiya", "country": "JP", "name": "Tomiya", "name_local": "富谷",
+        "address": "1-1 Narita", "postcode": "981-3341", "alt_id": "costcoJapanTomiyaWarehouse",
         "city": "富谷市", "region": "宮城県", "lat": 38.39, "lon": 140.88,
         "price_unit": "JPY/L", "currency": "JPY",
         "prices": [("Regular", "regular", "¥149"), ("Premium", "premium", "¥159"),
@@ -103,6 +110,7 @@ STATIONS = [
     },
     {
         "station_key": "TW-010", "country": "TW", "name": "Chungli",
+        "address": "No. 1 Zhongli Rd", "postcode": "320", "alt_id": "costcoTaiwanWarehouse010",
         "name_local": "桃園中壢店", "city": None, "region": "桃園市",
         "lat": 24.9636189, "lon": 121.1558083,
         "price_unit": "TWD/L", "currency": "TWD",
@@ -168,14 +176,16 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
     for index, station in enumerate(STATIONS):
         fx_usd_per_unit = 1.0 / UNITS_PER_USD[station["currency"]]
         common = {
-            key: station[key]
+            key: station.get(key)
             for key in (
                 "station_key",
                 "country",
                 "name",
                 "name_local",
+                "address",
                 "city",
                 "region",
+                "postcode",
                 "lat",
                 "lon",
             )
@@ -195,6 +205,8 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
                 first_seen_utc="2026-09-01T06:17:00Z",
                 last_seen_utc=captured_iso,
                 superseded_by=None,
+                alt_id=station.get("alt_id"),
+                source_station_id=station["station_key"].split("-", 1)[1],
             )
         )
 
@@ -222,8 +234,11 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
                 continue
             entry["grades"][grade] = payload
             for day_index, day in enumerate(dates):
-                wiggle = 1.0 + 0.015 * math.sin((day_index + index + offset) / 2.4)
-                per_litre = local * wiggle
+                # A sine wave made every single day a change, which is exactly
+                # the question the change flags exist to answer. Prices hold for
+                # a few days and then step, which is how fuel prices move.
+                step = (day_index + index + offset) // (4 + (index % 3))
+                per_litre = local * (1.0 + 0.008 * ((step % 5) - 2))
                 history_rows.append(
                     {
                         "capture_date": day,
@@ -240,6 +255,14 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         latest.append(entry)
 
     history = pl.DataFrame(history_rows).sort(["station_key", "grade", "capture_date"])
+    # The same flags sitedata derives, from the same helper, so the preview and
+    # the real build cannot drift apart.
+    history = with_change_flags(
+        history.with_columns(
+            pl.col("price_local_per_litre").alias("price_min"),
+            pl.col("price_local_per_litre").alias("price_max"),
+        )
+    )
     history.select(
         [
             "capture_date",
@@ -249,6 +272,8 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
             "price_usd_per_litre",
             "currency",
             "n_captures",
+            "changed",
+            "moved_intraday",
         ]
     ).write_parquet(out_dir / "history.parquet", row_group_size=20000, statistics=True)
 
