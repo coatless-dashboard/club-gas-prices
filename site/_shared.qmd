@@ -351,8 +351,8 @@ currencyOf = {
   return map;
 }
 
-// `costco-gas site-data` writes the staleness window into meta.json; 12 hours
-// is used only if that key is missing or unusable.
+// The collector writes the staleness window into meta.json; 12 hours is used
+// only if that key is missing or unusable.
 staleAfterHours = {
   const value = Number(meta.stale_after_hours);
   return Number.isFinite(value) && value > 0 ? value : 12;
