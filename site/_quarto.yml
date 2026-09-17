@@ -18,11 +18,12 @@ website:
       - href: about.qmd
         text: About
     right:
+      # Two repositories: this site, and the collector whose releases it reads.
       - icon: github
         href: https://github.com/coatless-dashboard/costco-gas-prices
-        aria-label: "Source repository on GitHub"
+        aria-label: "This site's source on GitHub"
       - icon: database
-        href: https://github.com/coatless-dashboard/costco-gas-prices/releases/tag/current
+        href: https://github.com/coatless-datasets/costco-gas-prices/releases/tag/current
         aria-label: "Download the data"
 
 format:

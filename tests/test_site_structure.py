@@ -37,7 +37,9 @@ def test_the_project_declares_a_website_and_both_themes():
 
 def test_the_navbar_links_the_repository_and_the_data():
     config = CONFIG.read_text(encoding="utf-8")
+    # This site's own source, and the collector whose releases it reads.
     assert "https://github.com/coatless-dashboard/costco-gas-prices" in config
+    assert "https://github.com/coatless-datasets/costco-gas-prices/releases" in config
     assert "releases/tag/current" in config
 
 

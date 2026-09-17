@@ -7,7 +7,7 @@
 siteFooter = {
   const repo = (meta.releases && meta.releases.all
     ? meta.releases.all.replace(/\/releases.*$/, "")
-    : "https://github.com/coatless-dashboard/costco-gas-prices");
+    : "https://github.com/coatless-datasets/costco-gas-prices");
   return html`<div>
     <p class="cgp-footer-notice">${meta.notice}</p>
     <p class="cgp-footer-notice">If you represent Costco Wholesale Corporation and would like
