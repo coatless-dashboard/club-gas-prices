@@ -1,0 +1,67 @@
+::: {.cgp-controlbar}
+
+```{ojs}
+viewof grade = radioControl(
+  "grade",
+  [["Regular", "regular"], ["Premium", "premium"], ["Diesel", "diesel"]],
+  "regular",
+  "Grade"
+)
+```
+
+```{ojs}
+viewof currency = radioControl(
+  "currency",
+  [["USD", "USD"], ["Local", "Local"]],
+  "USD",
+  "Currency"
+)
+```
+
+```{ojs}
+viewof volume = radioControl(
+  "volume",
+  [["per US gallon", "gal"], ["per litre", "litre"]],
+  "gal",
+  "Volume"
+)
+```
+
+```{ojs}
+freshnessNotice = {
+  const now = nowTick;
+  const items = [];
+  const builtAge = hoursAgo(meta.built_at_utc, now);
+  if (builtAge != null && builtAge > staleAfterHours) {
+    items.push(`This site has not updated since ${meta.built_at_utc}.`);
+  }
+  const stale = [];
+  for (const code of COUNTRY_ORDER) {
+    const entry = meta.countries ? meta.countries[code] : null;
+    if (!entry) continue;
+    const when = captureIdToDate(entry.last_success_capture_id);
+    if (!when) {
+      stale.push(`${COUNTRY_NAMES[code]} (never)`);
+      continue;
+    }
+    const age = (now.getTime() - when.getTime()) / 3600000;
+    if (age > staleAfterHours) stale.push(`${COUNTRY_NAMES[code]} (${Math.floor(age)} h)`);
+  }
+  if (stale.length) {
+    items.push(
+      `Last successful capture over ${staleAfterHours} h ago: ${stale.join(", ")}.`
+    );
+  }
+  if (!items.length) {
+    return html`<div class="cgp-notice">Every country was captured in the last
+      ${staleAfterHours} hours.</div>`;
+  }
+  return html`<div class="cgp-alert">${items.map((text) => html`<div>${text}</div>`)}</div>`;
+}
+```
+
+```{ojs}
+html`<div class="cgp-notice cgp-sidebar-section">${meta.notice}</div>`
+```
+
+:::

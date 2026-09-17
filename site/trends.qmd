@@ -1,0 +1,545 @@
+---
+title: "Trends"
+---
+
+{{< include _shared.qmd >}}
+
+```{ojs}
+//| output: false
+// Only the pages that query the release load DuckDB; the others never
+// pay for it. This replaced a MutationObserver that watched which tab
+// pane was active, which a multi-page site has no need of.
+pageWantsDb = true
+```
+
+{{< include _controls.qmd >}}
+
+```{ojs}
+//| output: false
+mixedCurrency = currency === "Local" && trendCountry === "All countries"
+effectiveTrendMode = mixedCurrency && trendMode === "price" ? "change" : trendMode
+trendModeGuard = {
+  const input = (viewof trendMode).querySelector('input[data-value="price"]');
+  if (input) {
+    input.disabled = mixedCurrency;
+    const label = input.closest("label");
+    if (label) {
+      label.title = mixedCurrency ? "One price axis needs one currency" : "";
+      label.classList.toggle("cgp-option-off", mixedCurrency);
+    }
+  }
+  return mixedCurrency;
+}
+
+// The card body is laid out after the cell runs, and Leaflet needs a real size.
+trendRegionRows =
+  db && trendCountry !== "All countries"
+    ? db.query(`
+        SELECT region,
+               strftime(capture_date, '%Y-%m-%d') AS d,
+               n_stations,
+               median_local_per_litre,
+               median_usd_per_litre
+        FROM summary_daily
+        WHERE level = 'region'
+          AND country = ${sqlText(trendCountry)}
+          AND grade = ${sqlText(grade)}
+        ORDER BY region, capture_date
+      `)
+    : []
+trendRegionOptions = {
+  const counts = new Map();
+  for (const row of trendRegionRows) {
+    if (row.n_stations > (counts.get(row.region) || 0)) counts.set(row.region, row.n_stations);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+}
+```
+
+## Breakdown
+::: {.cgp-panel .cgp-controls-card}
+
+```{ojs}
+//| output: false
+viewof trendCountry = asField(
+  Inputs.select(["All countries", ...COUNTRY_ORDER], {
+    label: "Breakdown",
+    format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
+  })
+)
+```
+
+```{ojs}
+//| output: false
+viewof showBand = asField(
+  Inputs.toggle({label: "Show the p25–p75 band", value: true}),
+  {inline: true}
+)
+```
+
+```{ojs}
+//| output: false
+// Static labels on purpose: if this depended on the breakdown or the currency,
+// OJS would rebuild the node and reset the reader's choice every time either
+// moved.
+viewof trendMode = radioControl(
+  "trendmode",
+  [["Price", "price"], ["Change", "change"], ["Separate charts", "separate"]],
+  "price",
+  "View"
+)
+```
+
+```{ojs}
+//| output: false
+viewof trendRegions = {
+  const options = trendRegionOptions;
+  const input = Inputs.checkbox(
+    options.map((entry) => entry[0]),
+    {
+      label: "Regions",
+      value: options.slice(0, PALETTE_SERIES_CAP).map((entry) => entry[0]),
+      format: (code) => {
+        const found = options.find((entry) => entry[0] === code);
+        return `${code} (${found ? found[1] : 0})`;
+      }
+    }
+  );
+  // Only a country breakdown has regions to pick from; with "All countries"
+  // selected there is nothing to show, so the control stands down rather than
+  // rendering an empty box.
+  if (!options.length) input.style.display = "none";
+  return asField(input);
+}
+```
+
+```{ojs}
+// Quarto gives every chunk its own card body, so three chunks stack down the
+// card however short it is. Placing the controls in one chunk lets them sit on
+// a single row -- which is all the height they need.
+html`<div class="cgp-controls-row">${[
+  viewof trendCountry,
+  viewof trendMode,
+  viewof showBand,
+  viewof trendRegions
+]}</div>`
+```
+
+:::
+
+
+## Price over time
+::: {.cgp-panel .cgp-chart-card}
+
+```{ojs}
+// Every chart on this page is built here, in the card that shows it, the
+// way the Map and Station cards build theirs. Two separate mechanisms
+// require it. An OJS cell's node is inserted where the cell is defined, so
+// a chart built in the hidden `output: false` chunk above is adopted by
+// that chunk and this panel stays empty. Charts also carry their own width:
+// rewrites every `Plot.plot` call to take the width and height of the cell
+// the call appears in, so a chart built in that hidden chunk is measured
+// against a container that is never visible and comes out 0 px wide.
+trendView = {
+  function allCountriesUsd() {
+    const data = trendCountryRows
+      .filter((row) => row.median_usd_per_litre != null)
+      .map((row) => ({
+        country: row.country,
+        name: COUNTRY_NAMES[row.country],
+        day: toDay(row.d),
+        median: perVolume(row.median_usd_per_litre, volume),
+        p25: perVolume(row.p25_usd_per_litre, volume),
+        p75: perVolume(row.p75_usd_per_litre, volume)
+      }));
+    if (!data.length) {
+      return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
+    }
+    const days = [...new Set(data.map((row) => row.day.getTime()))].sort();
+    const marks = [];
+    if (showBand) {
+      marks.push(
+        Plot.areaY(data, {
+          x: "day",
+          y1: "p25",
+          y2: "p75",
+          z: "country",
+          fill: (row) => COUNTRY_COLORS[row.country],
+          fillOpacity: 0.14
+        })
+      );
+    }
+    marks.push(
+      Plot.line(data, {
+        x: "day",
+        y: "median",
+        z: "country",
+        stroke: (row) => COUNTRY_COLORS[row.country],
+        strokeWidth: 2
+      }),
+      ...(showDots(days.length)
+        ? [Plot.dot(data, {x: "day", y: "median", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
+        : []),
+      // selectLast per series, not "rows on the global last day": a country
+      // whose feed stalls loses its label under the second rule, and that is
+      // exactly the one worth naming. `z` is explicit because `stroke` is a
+      // function, and Plot cannot infer the series from it.
+      Plot.text(
+        data,
+        Plot.selectLast({
+          x: "day",
+          y: "median",
+          z: "country",
+          text: "country",
+          dx: 14,
+          fill: (row) => COUNTRY_COLORS[row.country]
+        })
+      ),
+      // Last, so it paints over the country labels rather than under them.
+      Plot.tip(
+        data,
+        Plot.pointer({
+          x: "day",
+          y: "median",
+          ...tipStyle(),
+          title: (row) =>
+            `${row.name} · ${row.day.toISOString().slice(0, 10)}\n` +
+            `median ${fmtNumber(row.median, priceDigits)} USD ${volumeLabel}\n` +
+            `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}`
+        })
+      )
+    );
+    const figure = Plot.plot({
+      width: chartWidth,
+      height: 420,
+      marginRight: 60,
+      style: {background: "transparent", color: palette.text},
+      x: {label: "Capture date (UTC)", grid: true},
+      y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
+      marks
+    });
+    return html`<div>${figure}<div class="cgp-notice">${coverageNote(
+      days.length,
+      dayText(new Date(days[0])),
+      dayText(new Date(days[days.length - 1])),
+      latestStationCount(trendCountryRows)
+    )}</div></div>`;
+  }
+
+  // One chart for every country, in either currency, because what it plots is a
+  // ratio of two prices in the same currency. The unit cancels before anything
+  // is drawn, so nothing is converted and nothing is compared but the size of a
+  // move.
+  function allCountriesChange() {
+    const byCountry = new Map();
+    for (const row of trendCountryRows) {
+      const value = perVolume(
+        currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+        volume
+      );
+      if (value == null) continue;
+      if (!byCountry.has(row.country)) byCountry.set(row.country, []);
+      byCountry.get(row.country).push({
+        day: toDay(row.d),
+        value,
+        p25: perVolume(
+          currency === "USD" ? row.p25_usd_per_litre : row.p25_local_per_litre,
+          volume
+        ),
+        p75: perVolume(
+          currency === "USD" ? row.p75_usd_per_litre : row.p75_local_per_litre,
+          volume
+        )
+      });
+    }
+    const series = [...byCountry.values()];
+    const baseDay = commonBaseDay(series);
+    if (!baseDay) {
+      return html`<div class="cgp-notice">Not enough history yet for
+        ${GRADE_LABELS[grade]}.</div>`;
+    }
+    const data = [];
+    for (const [code, rows] of byCountry) {
+      const anchor = anchorRow(rows, baseDay);
+      if (!anchor) continue;
+      const rebased = anchor.day.getTime() !== baseDay.getTime();
+      for (const row of rows) {
+        const pct = pctFrom(row.value, anchor.value);
+        if (pct == null) continue;
+        data.push({
+          country: code,
+          name: COUNTRY_NAMES[code],
+          day: row.day,
+          pct,
+          p25: pctFrom(row.p25, anchor.value),
+          p75: pctFrom(row.p75, anchor.value),
+          price: row.value,
+          anchorPrice: anchor.value,
+          anchorDay: dayText(anchor.day),
+          unit: currency === "USD" ? "USD" : currencyOf.get(code) || "local",
+          rebased
+        });
+      }
+    }
+    if (!data.length) {
+      return html`<div class="cgp-notice">No values for ${GRADE_LABELS[grade]}.</div>`;
+    }
+    const baseText = dayText(baseDay);
+    const days = [...new Set(data.map((row) => row.day.getTime()))].sort();
+    const marks = [Plot.ruleY([0], {stroke: palette.grid})];
+    if (showBand) {
+      marks.push(
+        Plot.areaY(
+          data.filter((row) => row.p25 != null && row.p75 != null),
+          {
+            x: "day",
+            y1: "p25",
+            y2: "p75",
+            z: "country",
+            fill: (row) => COUNTRY_COLORS[row.country],
+            fillOpacity: 0.12
+          }
+        )
+      );
+    }
+    marks.push(
+      Plot.line(data, {
+        x: "day",
+        y: "pct",
+        z: "country",
+        stroke: (row) => COUNTRY_COLORS[row.country],
+        strokeWidth: 2
+      }),
+      ...(showDots(days.length)
+        ? [Plot.dot(data, {x: "day", y: "pct", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
+        : []),
+      Plot.text(
+        data,
+        Plot.selectLast({
+          x: "day",
+          y: "pct",
+          z: "country",
+          text: "country",
+          dx: 14,
+          fill: (row) => COUNTRY_COLORS[row.country]
+        })
+      ),
+      Plot.tip(
+        data,
+        Plot.pointer({
+          x: "day",
+          y: "pct",
+          ...tipStyle(),
+          title: (row) =>
+            `${row.name} · ${dayText(row.day)}\n` +
+            `${fmtPct(row.pct)} since ${row.anchorDay}${
+              row.rebased ? " (its own first day)" : ""
+            }\n` +
+            `${fmtNumber(row.price, priceDigits)} ${row.unit}${volumeShort} that day\n` +
+            `${fmtNumber(row.anchorPrice, priceDigits)} ${row.unit}${volumeShort} on ${
+              row.anchorDay
+            }`
+        })
+      )
+    );
+    const label =
+      currency === "USD"
+        ? `Change in median ${GRADE_LABELS[grade]} since ${baseText}, in USD (%)`
+        : `Change in median ${GRADE_LABELS[grade]} since ${baseText}, each country in its own currency (%)`;
+    const figure = Plot.plot({
+      width: chartWidth,
+      height: 400,
+      marginRight: 60,
+      style: {background: "transparent", color: palette.text},
+      x: {label: "Capture date (UTC)", grid: true},
+      y: {label, grid: true, nice: true, tickFormat: fmtPct},
+      marks
+    });
+    const note =
+      currency === "USD"
+        ? `Each country's median converted to USD, then divided by its own value on ${baseText}.`
+        : `Each country is divided by its own price on ${baseText}, in its own currency — nothing ` +
+          `is converted, so the axis compares movement, never price.`;
+    return html`<div>${figure}<div class="cgp-notice">${coverageNote(
+      days.length,
+      dayText(new Date(days[0])),
+      dayText(new Date(days[days.length - 1])),
+      latestStationCount(trendCountryRows)
+    )} ${note}${
+      showBand ? " The band is where the middle half of its stations sat, against the same starting point." : ""
+    } Per gallon and per litre differ by a constant, so they draw the same lines here; Volume still sets the prices in the tooltip.</div></div>`;
+  }
+
+  function allCountriesLocal() {
+    const byCountry = new Map();
+    for (const row of trendCountryRows) {
+      if (row.median_local_per_litre == null) continue;
+      if (!byCountry.has(row.country)) byCountry.set(row.country, []);
+      byCountry.get(row.country).push({
+        day: toDay(row.d),
+        median: perVolume(row.median_local_per_litre, volume),
+        p25: perVolume(row.p25_local_per_litre, volume),
+        p75: perVolume(row.p75_local_per_litre, volume)
+      });
+    }
+    const panels = COUNTRY_ORDER.filter((code) => byCountry.has(code)).map((code) => {
+      const rows = byCountry.get(code);
+      const marks = [];
+      if (showBand) {
+        marks.push(
+          Plot.areaY(rows, {
+            x: "day",
+            y1: "p25",
+            y2: "p75",
+            fill: COUNTRY_COLORS[code],
+            fillOpacity: 0.16
+          })
+        );
+      }
+      const unit = `${currencyOf.get(code) || ""} ${volumeShort}`;
+      marks.push(
+        Plot.line(rows, {x: "day", y: "median", stroke: COUNTRY_COLORS[code], strokeWidth: 2}),
+        Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]}),
+        Plot.tip(
+          rows,
+          Plot.pointerX({
+            x: "day",
+            y: "median",
+            ...tipStyle(),
+            title: (row) =>
+              `${COUNTRY_NAMES[code]} · ${row.day.toISOString().slice(0, 10)}\n` +
+              `median ${fmtNumber(row.median, priceDigits)} ${unit}\n` +
+              `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}`
+          })
+        )
+      );
+      const figure = Plot.plot({
+        // A panel, not the card: without an explicit width Quarto's autosizing
+        // gives every one of these the full card width, and the
+        // `.cgp-small-multiples` grid (columns of at least 240 px) collapses
+        // to a single column. An explicit width wins because the injected one
+        // is prepended to this object.
+        width: 240,
+        height: 190,
+        marginLeft: 52,
+        style: {background: "transparent", color: palette.text},
+        x: {label: null, ticks: 4, grid: true},
+        y: {label: `${currencyOf.get(code) || ""} ${volumeShort}`, grid: true, nice: true},
+        marks
+      });
+      return html`<div><div class="cgp-stale">${COUNTRY_NAMES[code]}</div>${figure}</div>`;
+    });
+    if (!panels.length) {
+      return html`<div class="cgp-notice">No local values for ${GRADE_LABELS[grade]}.</div>`;
+    }
+    return html`<div class="cgp-small-multiples">${panels}</div>`;
+  }
+
+  function regionBreakdown() {
+    const unit = currency === "USD" ? "USD" : currencyOf.get(trendCountry) || "local";
+    if (!trendRegionOptions.length) {
+      const rows = trendCountryRows
+        .filter((row) => row.country === trendCountry)
+        .map((row) => ({
+          day: toDay(row.d),
+          median: perVolume(
+            currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+            volume
+          )
+        }))
+        .filter((row) => row.median != null);
+      const figure = Plot.plot({
+        width: chartWidth,
+        height: 400,
+        style: {background: "transparent", color: palette.text},
+        x: {label: "Capture date (UTC)", grid: true},
+        y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
+        marks: [
+          Plot.line(rows, {
+            x: "day",
+            y: "median",
+            stroke: COUNTRY_COLORS[trendCountry],
+            strokeWidth: 2
+          }),
+          Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[trendCountry]}),
+          Plot.tip(
+            rows,
+            Plot.pointerX({
+              x: "day",
+              y: "median",
+              ...tipStyle(),
+              title: (row) =>
+                `${COUNTRY_NAMES[trendCountry]} · ${row.day.toISOString().slice(0, 10)}\n` +
+                `median ${fmtNumber(row.median, priceDigits)} ${unit} ${volumeLabel}`
+            })
+          )
+        ]
+      });
+      return html`<div>
+        <div class="cgp-notice">No regional breakdown for ${COUNTRY_NAMES[trendCountry]};
+          showing the national series.</div>
+        ${figure}
+      </div>`;
+    }
+    // tableau10 has ten colors. Asked for more series than that, Plot cycles
+    // them silently and the legend then claims two regions are one -- five US
+    // states would share every color. Cap the drawn set and say so, rather than
+    // drawing a key that is not true.
+    const asked = trendRegions;
+    const drawn = asked.slice(0, PALETTE_SERIES_CAP);
+    const chosen = new Set(drawn);
+    const data = trendRegionRows
+      .filter((row) => chosen.has(row.region))
+      .map((row) => ({
+        region: row.region,
+        day: toDay(row.d),
+        median: perVolume(
+          currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+          volume
+        )
+      }))
+      .filter((row) => row.median != null);
+    if (!data.length) return html`<div class="cgp-notice">Pick at least one region.</div>`;
+    const figure = Plot.plot({
+      width: chartWidth,
+      height: 420,
+      marginRight: 80,
+      style: {background: "transparent", color: palette.text},
+      // Quarto's OJS stdlib pins Plot 0.6.11, which has no `observable10`
+      // ordinal scheme: naming it throws and turns the whole cell into an error.
+      color: {legend: true, scheme: "tableau10"},
+      x: {label: "Capture date (UTC)", grid: true},
+      y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
+      marks: [
+        Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
+        Plot.dot(data, {x: "day", y: "median", r: 2, fill: "region"}),
+        Plot.tip(
+          data,
+          Plot.pointer({
+            x: "day",
+            y: "median",
+            ...tipStyle(),
+            title: (row) =>
+              `${row.region} · ${row.day.toISOString().slice(0, 10)}\n` +
+              `median ${fmtNumber(row.median, priceDigits)} ${unit} ${volumeLabel}`
+          })
+        )
+      ]
+    });
+    if (asked.length <= drawn.length) return figure;
+    return html`<div>${figure}<div class="cgp-notice">Showing the first
+      ${drawn.length} of ${asked.length} regions you picked: the palette has
+      ${PALETTE_SERIES_CAP} colors, and beyond that two regions would share
+      one. Separate charts shows them all.</div></div>`;
+  }
+
+  if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
+  if (effectiveTrendMode === "separate") {
+    return trendCountry === "All countries" ? allCountriesLocal() : regionBreakdown();
+  }
+  if (effectiveTrendMode === "change") return allCountriesChange();
+  return trendCountry === "All countries" ? allCountriesUsd() : regionBreakdown();
+}
+```
+
+:::

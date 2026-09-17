@@ -25,7 +25,8 @@ if str(HERE) not in sys.path:
 from range_server import serve  # noqa: E402
 
 PREFIX = "/costco-gas-prices/"
-PAGE_IDS = ["map", "compare", "trends", "station", "about"]
+# One document per view now, so a page is a URL rather than a tab pane.
+PAGES = ["index.html", "compare.html", "trends.html", "station.html", "about.html"]
 GRADES = ["regular", "premium", "diesel"]
 CURRENCIES = ["USD", "Local"]
 VOLUMES = ["gal", "litre"]
@@ -33,8 +34,8 @@ IDLE_TIMEOUT_MS = 60_000
 
 # The marks Observable Plot draws only when the page has rows: one dot per
 # country on Compare's median chart, one line per country on the Trends chart.
-COMPARE_DOTS = '#compare svg g[aria-label="dot"] circle'
-TREND_LINES = '#trends svg g[aria-label="line"] path'
+COMPARE_DOTS = 'svg g[aria-label="dot"] circle'
+TREND_LINES = 'svg g[aria-label="line"] path'
 
 TILE_HOSTS = ("basemaps.cartocdn.com", "tile.openstreetmap.org")
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
@@ -277,13 +278,18 @@ def main() -> int:
             install_routes(page)
 
             # Step 1: load, assert the page ids, check the Map with the defaults.
-            page.goto(base_url, wait_until="load")
+            page.goto(base_url + "index.html", wait_until="load")
             wait_idle(page, failures, "step 1 load")
-            for page_id in PAGE_IDS:
-                if page.locator(f"#{page_id}.tab-pane").count() != 1:
-                    failures.add(f"step 1: no tab pane with id #{page_id}")
-            if page.locator("#map.tab-pane.active").count() != 1:
-                failures.add("step 1: the Map page is not active on load")
+            linked = page.evaluate(
+                """() => [...document.querySelectorAll("nav a[href]")]
+                     .map((a) => new URL(a.href, location.href).pathname.split("/").pop())
+                     // Quarto writes the current page's own link as "./", which
+                     // resolves to the directory rather than to index.html.
+                     .map((name) => (name === "" ? "index.html" : name))"""
+            )
+            for name in PAGES:
+                if name not in linked:
+                    failures.add(f"step 1: the navbar does not link {name} (has {linked})")
             map_check(page, failures, "step 1", latest, "regular")
             check_clean(page, failures, "step 1", collected)
 
@@ -292,9 +298,9 @@ def main() -> int:
             # nothing about whether either page drew anything at all, and a
             # completely empty card is exactly what this is the only gate on.
             countries = expected_usd_countries(latest, "regular")
-            for page_id in PAGE_IDS:
-                page.locator(f'a.nav-link[href="#{page_id}"]').first.click()
-                page.wait_for_selector(f"#{page_id}.tab-pane.active", timeout=10_000)
+            for name in PAGES:
+                page_id = name.removesuffix(".html")
+                page.goto(base_url + name, wait_until="load")
                 wait_idle(page, failures, f"step 2 {page_id}")
                 if page_id == "compare":
                     plot_check(page, failures, "step 2 compare", COMPARE_DOTS, countries, "dots")
@@ -306,31 +312,30 @@ def main() -> int:
             # to render and hard to notice missing, and a helper defined in the
             # wrong chunk once took the whole Trends chart down to zero width.
             for page_id in ("compare", "trends"):
-                page.locator(f'a.nav-link[href="#{page_id}"]').first.click()
-                page.wait_for_selector(f"#{page_id}.tab-pane.active", timeout=10_000)
+                page.goto(base_url + f"{page_id}.html", wait_until="load")
                 wait_idle(page, failures, f"step 2c {page_id}")
                 try:
-                    # A chart sizes itself a tick after its pane becomes visible.
+                    # A chart sizes itself a tick after the page lays out.
                     page.wait_for_function(
-                        """(pane) => [...document.querySelectorAll(`#${pane} svg`)]
+                        """() => [...document.querySelectorAll("svg")]
                              .some((s) => s.getBoundingClientRect().width > 100)""",
-                        arg=page_id,
                         timeout=10_000,
                     )
                 except PlaywrightTimeoutError:
                     failures.add(f"step 2c {page_id}: no chart reached a usable width")
                     continue
                 spot = page.evaluate(
-                    """(pane) => {
-                      const svg = [...document.querySelectorAll(`#${pane} svg`)]
+                    """() => {
+                      const svg = [...document.querySelectorAll("svg")]
                         .find((s) => s.getBoundingClientRect().width > 100);
                       if (!svg) return null;
                       const dots = [...svg.querySelectorAll("g[aria-label='dot'] circle")];
                       if (!dots.length) return null;
-                      const r = dots[Math.floor(dots.length / 2)].getBoundingClientRect();
+                      const dot = dots[Math.floor(dots.length / 2)];
+                      dot.scrollIntoView({block: "center"});
+                      const r = dot.getBoundingClientRect();
                       return {x: r.x + r.width / 2, y: r.y + r.height / 2};
                     }""",
-                    page_id,
                 )
                 if not spot:
                     failures.add(f"step 2c {page_id}: no chart wide enough to hover")
@@ -338,13 +343,12 @@ def main() -> int:
                 page.mouse.move(spot["x"], spot["y"])
                 page.wait_for_timeout(700)
                 text = page.evaluate(
-                    """(pane) => {
-                      const svg = [...document.querySelectorAll(`#${pane} svg`)]
+                    """() => {
+                      const svg = [...document.querySelectorAll("svg")]
                         .find((s) => s.getBoundingClientRect().width > 100);
                       const tip = svg && svg.querySelector("g[aria-label='tip']");
                       return tip ? tip.textContent.trim() : "";
                     }""",
-                    page_id,
                 )
                 if not text:
                     failures.add(f"step 2c {page_id}: hovering a point raised no tip")
@@ -358,8 +362,7 @@ def main() -> int:
                     set_control(page, name, value)
                     wait_idle(page, failures, f"step 3 {name}={value}")
                     check_clean(page, failures, f"step 3 {name}={value}", collected)
-            page.locator('a.nav-link[href="#map"]').first.click()
-            page.wait_for_selector("#map.tab-pane.active", timeout=10_000)
+            page.goto(base_url + "index.html", wait_until="load")
             set_control(page, "grade", "regular")
             set_control(page, "currency", "USD")
             wait_idle(page, failures, "step 3 map")
@@ -398,10 +401,12 @@ def main() -> int:
                 check_clean(page, failures, "step 3b", collected)
 
             # Step 4: the Station deep link.
-            page.goto(f"{base_url}?station={quote(first_key, safe='')}#station", wait_until="load")
+            page.goto(
+                f"{base_url}station.html?station={quote(first_key, safe='')}", wait_until="load"
+            )
             wait_idle(page, failures, "step 4 deep link")
-            if page.locator("#station.tab-pane.active").count() != 1:
-                failures.add("step 4: #station is not the active tab pane")
+            if not page.url.split("/")[-1].startswith("station.html"):
+                failures.add(f"step 4: the deep link did not land on station.html ({page.url})")
             marks = page.locator(
                 '.cgp-station-chart svg g[aria-label="line"] path, '
                 '.cgp-station-chart svg g[aria-label="dot"] circle'
@@ -414,12 +419,15 @@ def main() -> int:
             # rate turned the local price into the USD one.
             spot = page.evaluate(
                 """() => {
-                  const svg = [...document.querySelectorAll('#station svg')]
+                  const svg = [...document.querySelectorAll("svg")]
                     .find((s) => s.getBoundingClientRect().width > 200
                                  && s.querySelector("g[aria-label='dot'] circle"));
                   if (!svg) return null;
                   const dots = [...svg.querySelectorAll("g[aria-label='dot'] circle")];
-                  const r = dots[Math.floor(dots.length / 2)].getBoundingClientRect();
+                  const dot = dots[Math.floor(dots.length / 2)];
+                  // The page scrolls now, so a mark can sit below the fold.
+                  dot.scrollIntoView({block: "center"});
+                  const r = dot.getBoundingClientRect();
                   return {x: r.x + r.width / 2, y: r.y + r.height / 2};
                 }"""
             )
@@ -430,7 +438,7 @@ def main() -> int:
                 page.wait_for_timeout(700)
                 tip = page.evaluate(
                     """() => {
-                      const svg = [...document.querySelectorAll('#station svg')]
+                      const svg = [...document.querySelectorAll("svg")]
                         .find((s) => s.getBoundingClientRect().width > 200
                                      && s.querySelector("g[aria-label='dot'] circle"));
                       const g = svg && svg.querySelector("g[aria-label='tip']");
@@ -441,7 +449,7 @@ def main() -> int:
                     failures.add("step 4: hovering the station chart raised no tip")
                 else:
                     print(f"step 4: chart tip reads {tip.splitlines()[0][:36]!r}", flush=True)
-            panel = page.locator("#station").inner_text()
+            panel = page.locator("body").inner_text()
             if "USD" not in panel:
                 failures.add("step 4: the station panel never mentions the USD conversion")
             check_clean(page, failures, "step 4", collected)

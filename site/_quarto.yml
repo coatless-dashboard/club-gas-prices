@@ -1,0 +1,39 @@
+project:
+  type: website
+  output-dir: ../_site
+
+website:
+  title: "Costco Gas Prices"
+  description: "Posted fuel prices at Costco gas stations in seven countries."
+  navbar:
+    left:
+      - href: index.qmd
+        text: Map
+      - href: compare.qmd
+        text: Compare
+      - href: trends.qmd
+        text: Trends
+      - href: station.qmd
+        text: Station
+      - href: about.qmd
+        text: About
+    right:
+      - icon: github
+        href: https://github.com/coatless-dashboard/costco-gas-prices
+        aria-label: "Source repository on GitHub"
+      - icon: database
+        href: https://github.com/coatless-dashboard/costco-gas-prices/releases/tag/current
+        aria-label: "Download the data"
+
+format:
+  html:
+    theme:
+      light: [default, custom.scss]
+      dark: [default, custom.scss, dark.scss]
+    respect-user-color-scheme: true
+    page-layout: full
+    toc: false
+    css: []
+
+execute:
+  echo: false

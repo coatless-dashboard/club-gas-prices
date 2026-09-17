@@ -1,0 +1,299 @@
+---
+title: "Station"
+---
+
+{{< include _shared.qmd >}}
+
+```{ojs}
+//| output: false
+// Only the pages that query the release load DuckDB; the others never
+// pay for it. This replaced a MutationObserver that watched which tab
+// pane was active, which a multi-page site has no need of.
+pageWantsDb = true
+```
+
+{{< include _controls.qmd >}}
+
+## Find a station
+::: {.cgp-panel .cgp-search-card}
+
+```{ojs}
+//| output: false
+viewof stationQuery = asField(
+  Inputs.search(stationsAll, {
+    placeholder: "Name, local name, city or region…",
+    columns: ["name", "name_local", "city", "region"],
+    label: "Search"
+  }),
+  {inline: true}
+)
+```
+
+```{ojs}
+// The search box and its results share one chunk, and so one card body. Given
+// a chunk each, Quarto sized the box's body to 26px and clipped the label and
+// the input inside it.
+stationResults = {
+  const buttons = stationQuery.slice(0, 40).map((row) => {
+    const suffix =
+      row.status === "active"
+        ? ""
+        : ` · last seen ${String(row.last_seen_utc || "").slice(0, 10)}`;
+    const button = html`<button type="button" data-station-key=${row.station_key}>${row.name}${
+      row.name_local ? ` (${row.name_local})` : ""
+    } — ${[row.city, row.region, row.country].filter((v) => v).join(", ")}${suffix}</button>`;
+    button.addEventListener("click", () => stationChannel.open(row.station_key));
+    return button;
+  });
+  const body = buttons.length
+    ? html`<div class="cgp-results">${buttons}</div>`
+    : html`<div class="cgp-notice">No station matches.</div>`;
+  return html`<div class="cgp-search">${viewof stationQuery}${body}</div>`;
+}
+```
+
+:::
+
+
+## Price history
+::: {.cgp-panel}
+
+```{ojs}
+stationChart = {
+  if (!selectedStation) {
+    return html`<div class="cgp-notice cgp-station-chart">Search for a station, or open one from
+      the Map.</div>`;
+  }
+  if (!selectedMeta) {
+    return html`<div class="cgp-alert cgp-station-chart">Station not found: ${selectedStation}</div>`;
+  }
+  if (!db) {
+    return html`<div class="cgp-notice cgp-station-chart">Loading the price database…</div>`;
+  }
+  const pick = (row) =>
+    perVolume(currency === "USD" ? row.price_usd_per_litre : row.price_local_per_litre, volume);
+  const own = stationHistoryRows
+    .filter((row) => row.station_key === selectedMeta.station_key)
+    .map((row) => ({day: toDay(row.d), grade: row.grade, value: pick(row)}))
+    .filter((row) => row.value != null);
+  const neighbours = stationHistoryRows
+    .filter((row) => row.station_key !== selectedMeta.station_key && row.grade === grade)
+    .map((row) => ({day: toDay(row.d), key: row.station_key, value: pick(row)}))
+    .filter((row) => row.value != null);
+  const medians = stationMedianRows
+    .map((row) => ({
+      day: toDay(row.d),
+      value: perVolume(
+        currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
+        volume
+      )
+    }))
+    .filter((row) => row.value != null);
+  if (!own.length && !medians.length) {
+    return html`<div class="cgp-notice cgp-station-chart">No history yet for
+      ${selectedMeta.name}.</div>`;
+  }
+  const medianLabel =
+    selectedMeta.region == null
+      ? `${COUNTRY_NAMES[selectedMeta.country]} median`
+      : `${selectedMeta.region} median`;
+  const entry = selectedLatest ? gradeEntry(selectedLatest, grade) : null;
+  const unit = currency === "USD" ? "USD" : entry ? entry.currency : "local";
+  const figure = Plot.plot({
+    width: chartWidth,
+    height: 360,
+    marginRight: 80,
+    style: {background: "transparent", color: palette.text},
+    color: {
+      legend: true,
+      domain: ["regular", "premium", "diesel"],
+      range: [palette.ramp[0], palette.ramp[3], palette.ramp[2]]
+    },
+    x: {label: "Capture date (UTC)", grid: true},
+    y: {label: `${unit} ${volumeLabel}`, grid: true, nice: true},
+    marks: [
+      Plot.line(neighbours, {
+        x: "day",
+        y: "value",
+        z: "key",
+        stroke: palette.muted,
+        strokeOpacity: 0.35
+      }),
+      // The faint lines were the only unlabelled thing on the chart. One label
+      // on the highest of them at its last day says what the whole set is.
+      Plot.text(topNeighbour(neighbours), {
+        x: "day",
+        y: "value",
+        text: () => {
+          const n = new Set(neighbours.map((row) => row.key)).size;
+          return n === 1 ? "nearest station" : `nearest ${n} stations`;
+        },
+        dx: 6,
+        dy: -8,
+        textAnchor: "start",
+        fill: palette.muted
+      }),
+      Plot.line(medians, {
+        x: "day",
+        y: "value",
+        stroke: palette.muted,
+        strokeDasharray: "4 3",
+        strokeWidth: 2
+      }),
+      Plot.text(medians.slice(-1), {
+        x: "day",
+        y: "value",
+        text: () => medianLabel,
+        dx: 6,
+        textAnchor: "start",
+        fill: palette.muted
+      }),
+      Plot.line(own, {x: "day", y: "value", z: "grade", stroke: "grade", strokeWidth: 2.5}),
+      Plot.dot(own, {
+        x: "day",
+        y: "value",
+        z: "grade",
+        fill: "grade",
+        r: 3
+      }),
+      // Last, so it paints over the median label rather than under it.
+      Plot.tip(
+        own,
+        Plot.pointer({
+          x: "day",
+          y: "value",
+          ...tipStyle(),
+          title: (row) =>
+            `${selectedMeta.name} · ${row.day.toISOString().slice(0, 10)}\n` +
+            `${GRADE_LABELS[row.grade] || row.grade} ${fmtNumber(row.value, priceDigits)} ` +
+            `${unit}${volumeShort}`
+        })
+      )
+    ]
+  });
+  return html`<div class="cgp-station-chart">${figure}</div>`;
+}
+```
+
+:::
+
+## Station detail
+::: {.cgp-panel}
+
+```{ojs}
+stationDetail = {
+  if (!selectedStation) return html`<div class="cgp-notice">Nothing selected.</div>`;
+  if (!selectedMeta) {
+    return html`<div class="cgp-alert">Station not found: ${selectedStation}</div>`;
+  }
+  const entries = selectedLatest
+    ? [
+        ...["regular", "premium", "diesel"]
+          .filter((key) => gradeEntry(selectedLatest, key))
+          .map((key) => [GRADE_LABELS[key], gradeEntry(selectedLatest, key)]),
+        ...Object.entries(selectedLatest.other || {})
+      ]
+    : [];
+  const rows = entries.map(
+    ([label, entry]) => html`<tr>
+      <td>${label}</td>
+      <td>${entry.price_raw} ${entry.price_unit}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(entry.price_local_per_litre, volume), priceDigits)}
+        ${entry.currency}${volumeShort}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(entry.price_usd_per_litre, volume), priceDigits)}
+        USD${volumeShort}</td>
+    </tr>`
+  );
+  const links = [];
+  if (selectedMeta.superseded_by) {
+    links.push(html`<div class="cgp-notice">Superseded by
+      <a href=${stationHref(selectedMeta.superseded_by)}>${
+        selectedMeta.superseded_by
+      }</a>.</div>`);
+  }
+  for (const row of stationsAll.filter((s) => s.superseded_by === selectedMeta.station_key)) {
+    links.push(html`<div class="cgp-notice">Supersedes
+      <a href=${stationHref(row.station_key)}>${
+        row.station_key
+      }</a>.</div>`);
+  }
+  const neighbours = nearestStations.map(
+    (row) => html`<li><a href=${stationHref(row.station_key)}>${
+      row.name
+    }</a> <span class="cgp-stale">${row.km.toFixed(0)} km</span></li>`
+  );
+  return html`<div>
+    <div class="cgp-popup-title">${selectedMeta.name}${
+      selectedMeta.name_local
+        ? html` <span class="cgp-local">${selectedMeta.name_local}</span>`
+        : ""
+    }</div>
+    <div class="cgp-popup-place">${[
+      selectedMeta.city,
+      selectedMeta.region,
+      COUNTRY_NAMES[selectedMeta.country]
+    ]
+      .filter((v) => v)
+      .join(", ")} · ${selectedMeta.station_key}</div>
+    <table class="cgp-table">
+      <thead><tr><th>Grade</th><th>As published</th>
+        <th class="cgp-num">Local</th><th class="cgp-num">USD</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="cgp-notice">First seen ${String(selectedMeta.first_seen_utc || "").slice(0, 10)},
+      last seen ${String(selectedMeta.last_seen_utc || "").slice(0, 10)},
+      status ${selectedMeta.status}.</div>
+    ${rateNote(selectedLatest)}
+    ${links}
+    ${stationLinksEl(selectedMeta)}
+    <div class="cgp-notice">Nearest active stations:</div>
+    <ul class="cgp-notice">${neighbours}</ul>
+  </div>`;
+}
+```
+
+:::
+
+
+## Recent price changes
+::: {.cgp-panel .cgp-chart-card}
+
+```{ojs}
+stationChanges = {
+  if (!selectedMeta) return html`<div class="cgp-notice">Nothing selected.</div>`;
+  if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
+  const own = stationHistoryRows.filter((row) => row.station_key === selectedMeta.station_key);
+  const changes = priceChanges(own, 30);
+  if (!changes.length) {
+    return html`<div class="cgp-notice">No price change recorded yet for
+      ${selectedMeta.name}. Its prices have held for every day collected so far.</div>`;
+  }
+  const rows = changes.map((change) => {
+    const delta = change.to - change.from;
+    const pct = change.from > 0 ? (delta / change.from) * 100 : null;
+    const unit = currency === "USD" ? "USD" : change.currency;
+    const from = currency === "USD" ? change.fromUsd : change.from;
+    const to = currency === "USD" ? change.toUsd : change.to;
+    return html`<tr>
+      <td>${change.d}</td>
+      <td>${GRADE_LABELS[change.grade] || change.grade}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(from, volume), priceDigits)}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(to, volume), priceDigits)} ${unit}${volumeShort}</td>
+      <td class=${"cgp-num " + (delta > 0 ? "cgp-up" : "cgp-down")}>${
+        delta > 0 ? "▲" : "▼"
+      } ${pct == null ? "—" : fmtPct(pct)}</td>
+    </tr>`;
+  });
+  return html`<div>
+    <table class="cgp-table">
+      <thead><tr><th>Day</th><th>Grade</th><th class="cgp-num">From</th>
+        <th class="cgp-num">To</th><th class="cgp-num">Change</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="cgp-notice">The day a new price was first seen, not necessarily the day it
+      changed: a station is read a few times a day, and only while it is open.</div>
+  </div>`;
+}
+```
+
+:::

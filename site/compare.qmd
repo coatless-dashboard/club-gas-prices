@@ -1,0 +1,305 @@
+---
+title: "Compare"
+---
+
+{{< include _shared.qmd >}}
+
+```{ojs}
+//| output: false
+// Only the pages that query the release load DuckDB; the others never
+// pay for it. This replaced a MutationObserver that watched which tab
+// pane was active, which a multi-page site has no need of.
+pageWantsDb = true
+```
+
+{{< include _controls.qmd >}}
+
+```{ojs}
+//| output: false
+compareRegionRows = db && compareCountry !== "All countries"
+  ? db.query(`
+      SELECT region,
+             strftime(capture_date, '%Y-%m-%d') AS d,
+             n_stations,
+             n_stations_usd,
+             median_local_per_litre,
+             p25_local_per_litre,
+             p75_local_per_litre,
+             median_usd_per_litre,
+             p25_usd_per_litre,
+             p75_usd_per_litre
+      FROM summary_daily
+      WHERE level = 'region' AND country = ${sqlText(compareCountry)}
+        AND grade = ${sqlText(grade)}
+      ORDER BY region, capture_date
+    `)
+  : []
+
+// The newest day each key reached, and whether that is behind the newest day
+// any of them reached. Serves countries and regions alike.
+compareRegionLatest = {
+  const {newestFor, newest} = newestByKey(compareRegionRows, "region");
+  const rows = [...newestFor.values()]
+    .map((row) => Object.assign({}, row, {sold: true, stale: row.d < newest}))
+    .sort((a, b) => (b.median_usd_per_litre ?? 0) - (a.median_usd_per_litre ?? 0));
+  return {rows, newest};
+}
+```
+
+## Breakdown
+::: {.cgp-panel .cgp-controls-card}
+
+```{ojs}
+// Deliberately its own select rather than shared with Trends: a control that
+// lives on one page and silently governs another is worse than two.
+viewof compareCountry = asField(
+  Inputs.select(["All countries", ...COUNTRY_ORDER], {
+    label: "Breakdown",
+    format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
+  })
+)
+```
+
+:::
+
+
+## Latest day
+::: {.cgp-panel .cgp-chart-card}
+
+```{ojs}
+compareView = {
+  if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
+
+  // One mark set, four scopes. `x` carries a price where a single currency is
+  // on screen and a percent change where it is not; everything else is the same
+  // chart, so the page reads the same way whichever question is being asked.
+  function dotPlot(rows, {axisLabel, colorOf, zeroRule, tipTitle, marginLeft}) {
+    const pitch = rows.length > 16 ? 22 : 34;
+    const radius = rows.length > 16 ? 4 : 6;
+    const marks = [];
+    if (zeroRule) marks.push(Plot.ruleY([0], {stroke: palette.grid}));
+    marks.push(
+      Plot.ruleY(rows, {
+        y: "label",
+        x1: "p25",
+        x2: "p75",
+        stroke: palette.muted,
+        strokeOpacity: 0.32,
+        strokeWidth: rows.length > 16 ? 7 : 10
+      }),
+      Plot.text(rows, {
+        y: "label",
+        frameAnchor: "right",
+        textAnchor: "start",
+        dx: 8,
+        fontSize: 11,
+        fill: palette.muted,
+        text: (row) => `${row.n} station${row.n === 1 ? "" : "s"}`
+      }),
+      Plot.dot(rows, {
+        y: "label",
+        x: "value",
+        r: radius,
+        fill: colorOf,
+        stroke: palette.stroke,
+        strokeWidth: 1
+      }),
+      Plot.text(rows, {
+        y: "label",
+        x: "value",
+        text: (row) => row.valueText,
+        dy: -14,
+        fill: palette.text
+      }),
+      // Last, so it paints over the value labels rather than under them.
+      Plot.tip(rows, Plot.pointer({y: "label", x: "value", ...tipStyle(), title: tipTitle}))
+    );
+    return Plot.plot({
+      width: chartWidth,
+      height: 52 + rows.length * pitch,
+      marginLeft,
+      marginRight: 110,
+      style: {background: "transparent", color: palette.text},
+      x: {label: axisLabel, grid: true, nice: true},
+      y: {domain: rows.map((row) => row.label), label: null},
+      marks
+    });
+  }
+
+  const priceKey = (what) =>
+    spreadKeyEl(
+      "median station",
+      "middle half of stations: p25 to p75",
+      `Half of a ${what}'s stations price inside the bar — a quarter below its left end, ` +
+        "a quarter above its right end."
+    );
+
+  const wrap = (key, figure, note) =>
+    html`<div>${key}${figure}${note ? html`<div class="cgp-notice">${note}</div>` : ""}</div>`;
+
+  // ---- one country, by region -------------------------------------------
+  if (compareCountry !== "All countries") {
+    const regionRows = compareRegionLatest.rows;
+    if (!regionRows.length) {
+      return html`<div class="cgp-notice">${COUNTRY_NAMES[compareCountry]} publishes no region,
+        so there is no breakdown to show. Its national figure is on the All countries view.</div>`;
+    }
+    // Inside one country there is one currency, so local prices need no
+    // transform: Ontario and Quebec both price in CAD.
+    const unit = currency === "USD" ? "USD" : currencyOf.get(compareCountry) || "local";
+    const pick = (row, which) =>
+      perVolume(currency === "USD" ? row[`${which}_usd_per_litre`] : row[`${which}_local_per_litre`], volume);
+    const rows = regionRows
+      .map((row) => ({
+        label: `${row.region}${row.stale ? " (stale)" : ""}`,
+        value: pick(row, "median"),
+        p25: pick(row, "p25"),
+        p75: pick(row, "p75"),
+        n: row.n_stations,
+        nUsd: row.n_stations_usd,
+        region: row.region,
+        d: row.d
+      }))
+      .filter((row) => row.value != null)
+      .map((row) => Object.assign(row, {valueText: fmtNumber(row.value, priceDigits)}));
+    if (!rows.length) {
+      return html`<div class="cgp-notice">No ${unit} values for ${GRADE_LABELS[grade]} in
+        ${COUNTRY_NAMES[compareCountry]}.</div>`;
+    }
+    return wrap(
+      priceKey("region"),
+      dotPlot(rows, {
+        axisLabel: `${GRADE_LABELS[grade]}, ${unit} ${volumeLabel} — ${COUNTRY_NAMES[compareCountry]} by region`,
+        colorOf: () => COUNTRY_COLORS[compareCountry],
+        zeroRule: false,
+        marginLeft: 200,
+        tipTitle: (row) =>
+          `${row.region} · ${row.d}\n` +
+          `median ${fmtNumber(row.value, priceDigits)} ${unit}${volumeShort}\n` +
+          `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}\n` +
+          `${row.n} station${row.n === 1 ? "" : "s"}`
+      }),
+      `Regions of ${COUNTRY_NAMES[compareCountry]} on its own newest day for each. One country ` +
+        `prices in one currency, so these are real prices.`
+    );
+  }
+
+  // ---- all countries, local currency: change, not price ------------------
+  if (currency === "Local") {
+    const series = new Map();
+    for (const row of compareRows) {
+      const value = perVolume(row.median_local_per_litre, volume);
+      if (value == null) continue;
+      if (!series.has(row.country)) series.set(row.country, []);
+      series.get(row.country).push({day: toDay(row.d), value, row});
+    }
+    const baseDay = commonBaseDay([...series.values()]);
+    const rows = [];
+    for (const item of compareLatest.rows.filter((row) => row.sold)) {
+      const history = series.get(item.country);
+      const anchor = history ? anchorRow(history, baseDay) : null;
+      const median = perVolume(item.median_local_per_litre, volume);
+      if (!anchor || median == null) continue;
+      const unit = currencyOf.get(item.country) || "local";
+      rows.push({
+        label: `${COUNTRY_NAMES[item.country]} · ${fmtNumber(median, priceDigits)} ${unit}${volumeShort}${item.stale ? " (stale)" : ""}`,
+        country: item.country,
+        value: pctFrom(median, anchor.value),
+        p25: pctFrom(perVolume(item.p25_local_per_litre, volume), anchor.value),
+        p75: pctFrom(perVolume(item.p75_local_per_litre, volume), anchor.value),
+        n: item.n_stations,
+        median,
+        unit,
+        d: item.d,
+        anchorDay: dayText(anchor.day)
+      });
+    }
+    const priced = rows.filter((row) => row.value != null)
+      .map((row) => Object.assign(row, {valueText: fmtPct(row.value)}));
+    if (!priced.length || !baseDay) {
+      return html`<div class="cgp-notice">Not enough history yet for
+        ${GRADE_LABELS[grade]}.</div>`;
+    }
+    const baseText = dayText(baseDay);
+    return wrap(
+      spreadKeyEl(
+        `median, change since ${baseText}`,
+        "middle half of stations today, against the same starting point",
+        `Each country is divided by its own price on ${baseText}, in its own currency — nothing ` +
+          "is converted. Its median today is printed beside its name."
+      ),
+      dotPlot(priced, {
+        axisLabel: `Change in median ${GRADE_LABELS[grade]} since ${baseText}, each country in its own currency (%)`,
+        colorOf: (row) => COUNTRY_COLORS[row.country],
+        zeroRule: true,
+        marginLeft: 260,
+        tipTitle: (row) =>
+          `${COUNTRY_NAMES[row.country]} · ${row.d}\n` +
+          `${fmtPct(row.value)} since ${row.anchorDay}\n` +
+          `${fmtNumber(row.median, priceDigits)} ${row.unit}${volumeShort} today\n` +
+          `${row.n} station${row.n === 1 ? "" : "s"}`
+      })
+    );
+  }
+
+  // ---- all countries, USD: real prices on one axis -----------------------
+  const data = compareLatest.rows
+    .filter((row) => row.sold)
+    .map((row) => ({
+      label: `${COUNTRY_NAMES[row.country]} · ${row.d}${row.stale ? " (stale)" : ""}`,
+      country: row.country,
+      value: perVolume(row.median_usd_per_litre, volume),
+      p25: perVolume(row.p25_usd_per_litre, volume),
+      p75: perVolume(row.p75_usd_per_litre, volume),
+      // n_stations counts stations; n_stations_usd counts the ones that had an
+      // exchange rate. The annotation said "stations" and showed the latter.
+      n: row.n_stations,
+      nUsd: row.n_stations_usd,
+      d: row.d
+    }))
+    .filter((row) => row.value != null)
+    .map((row) => Object.assign(row, {valueText: fmtNumber(row.value, priceDigits)}));
+  if (!data.length) {
+    return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
+  }
+  return wrap(
+    priceKey("country"),
+    dotPlot(data, {
+      axisLabel: `${GRADE_LABELS[grade]}, USD ${volumeLabel}`,
+      colorOf: (row) => COUNTRY_COLORS[row.country],
+      zeroRule: false,
+      marginLeft: 200,
+      tipTitle: (row) =>
+        `${COUNTRY_NAMES[row.country] || row.country} · ${row.d}\n` +
+        `median ${fmtNumber(row.value, priceDigits)} USD ${volumeLabel}\n` +
+        `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}\n` +
+        `${row.n} station${row.n === 1 ? "" : "s"}` +
+        (row.nUsd != null && row.nUsd !== row.n ? `, ${row.nUsd} with a USD price` : "")
+    })
+  );
+}
+```
+
+:::
+
+
+## Notes
+::: {.cgp-panel .cgp-notes-card}
+
+```{ojs}
+compareNotes = {
+  const notSold = compareLatest.rows
+    .filter((row) => !row.sold)
+    .map((row) => COUNTRY_NAMES[row.country]);
+  return html`<div class="cgp-notice">
+    ${notSold.length ? html`<div>Not sold: ${notSold.join(", ")}.</div>` : ""}
+    <div>Each country shows its own newest day with stations; an older day is marked stale.</div>
+    <div>The station count is the stations that posted a ${GRADE_LABELS[grade]} price that day —
+      not every warehouse, and not stations selling only another grade.</div>
+    <div>Grades are not equivalent across countries: see the grade table on the About page.
+      UK and Australian diesel is premium diesel. Costco prices are not national averages.</div>
+  </div>`;
+}
+```
+
+:::

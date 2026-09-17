@@ -12,7 +12,7 @@ sys.path.insert(0, str(SMOKE))
 
 from smoke_site import (  # noqa: E402
     LIBRARY_HOSTS,
-    PAGE_IDS,
+    PAGES,
     expected_marker_count,
     expected_usd_countries,
     is_site_console_error,
@@ -91,6 +91,6 @@ def test_only_errors_from_the_site_origin_count():
     assert not is_site_console_error("error", origin + "/favicon.ico", origin)
 
 
-def test_the_five_page_ids_and_the_library_hosts_are_the_spec_ones():
-    assert PAGE_IDS == ["map", "compare", "trends", "station", "about"]
+def test_the_five_pages_and_the_library_hosts_are_the_spec_ones():
+    assert PAGES == ["index.html", "compare.html", "trends.html", "station.html", "about.html"]
     assert LIBRARY_HOSTS == ("cdn.jsdelivr.net", "cdn.observableusercontent.com")

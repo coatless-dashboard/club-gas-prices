@@ -6,37 +6,56 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-QMD = ROOT / "site" / "index.qmd"
-CUSTOM = ROOT / "site" / "custom.scss"
-DARK = ROOT / "site" / "dark.scss"
+SITE = ROOT / "site"
+QMD = SITE / "index.qmd"
+CUSTOM = SITE / "custom.scss"
+DARK = SITE / "dark.scss"
+CONFIG = SITE / "_quarto.yml"
 
-PAGE_HEADINGS = ["# {.sidebar}", "# Map", "# Compare", "# Trends", "# Station", "# About"]
+# One page per view, plus the two includes every page pulls in.
+PAGES = ("index.qmd", "compare.qmd", "trends.qmd", "station.qmd", "about.qmd")
+INCLUDES = ("_shared.qmd", "_controls.qmd")
 
 
 def read_qmd() -> str:
-    return QMD.read_text(encoding="utf-8")
+    """Every page and include, concatenated.
+
+    These guards are about what the site says and does, not about which file
+    says it; the split into pages moved a lot of it without changing any of it.
+    """
+    return "\n".join((SITE / name).read_text(encoding="utf-8") for name in (*INCLUDES, *PAGES))
 
 
-def test_front_matter_declares_the_dashboard_format_and_both_themes():
-    text = read_qmd()
-    front = text.split("---")[1]
-    assert "dashboard:" in front
-    assert "respect-user-color-scheme: true" in front
-    assert "light: [default, custom.scss]" in front
-    assert "dark: [default, custom.scss, dark.scss]" in front
-    assert "echo: false" in front
+def test_the_project_declares_a_website_and_both_themes():
+    config = CONFIG.read_text(encoding="utf-8")
+    assert "type: website" in config
+    assert "respect-user-color-scheme: true" in config
+    assert "light: [default, custom.scss]" in config
+    assert "dark: [default, custom.scss, dark.scss]" in config
+    assert "echo: false" in config
 
 
-def test_front_matter_has_nav_buttons_to_the_repository_and_the_data():
-    front = read_qmd().split("---")[1]
-    assert "https://github.com/coatless-dashboard/costco-gas-prices" in front
-    assert "releases/tag/current" in front
+def test_the_navbar_links_the_repository_and_the_data():
+    config = CONFIG.read_text(encoding="utf-8")
+    assert "https://github.com/coatless-dashboard/costco-gas-prices" in config
+    assert "releases/tag/current" in config
 
 
-def test_the_five_pages_and_the_sidebar_are_present_in_order():
-    lines = [line.rstrip() for line in read_qmd().splitlines()]
-    found = [line for line in lines if line in PAGE_HEADINGS]
-    assert found == PAGE_HEADINGS
+def test_every_page_exists_and_is_in_the_navbar():
+    config = CONFIG.read_text(encoding="utf-8")
+    for name in PAGES:
+        assert (SITE / name).exists(), name
+        assert f"href: {name}" in config, name
+
+
+def test_every_page_pulls_in_the_shared_cells_and_the_controls():
+    """Each page is its own OJS runtime, so the shared cells are included into
+    every one of them rather than shared between them."""
+    for name in PAGES:
+        text = (SITE / name).read_text(encoding="utf-8")
+        assert "{{< include _shared.qmd >}}" in text, name
+        assert "{{< include _controls.qmd >}}" in text, name
+        assert "pageWantsDb = " in text, name
 
 
 def test_exactly_one_duckdb_client_is_created():
@@ -55,11 +74,24 @@ def test_no_parenthesised_object_literal_cells():
     assert re.search(r"^\s*\w+\s*=\s*\(\{", read_qmd(), re.M) is None
 
 
-def test_the_theme_and_db_gates_are_generators():
+def test_only_the_pages_that_query_load_duckdb():
+    """A page that does not query never downloads DuckDB-WASM. In the dashboard
+    this needed a MutationObserver on the active tab pane, because every cell of
+    every view ran at load."""
     text = read_qmd()
     assert 'body.classList.contains("quarto-dark")' in text
-    assert "dbWanted = Generators.observe(" in text
-    assert "db = dbWanted" in text
+    assert "db = pageWantsDb" in text
+    assert "dbWanted" not in text
+    wants = {
+        name: "pageWantsDb = true" in (SITE / name).read_text(encoding="utf-8") for name in PAGES
+    }
+    assert wants == {
+        "index.qmd": False,
+        "compare.qmd": True,
+        "trends.qmd": True,
+        "station.qmd": True,
+        "about.qmd": False,
+    }
 
 
 def test_the_freshness_notice_uses_the_window_from_meta():
@@ -92,9 +124,24 @@ def test_the_map_lifecycle_pieces_are_present():
 
 def test_station_selection_uses_the_query_string():
     text = read_qmd()
-    assert 'history.pushState({}, "", "?station=" + encodeURIComponent(key) + "#station")' in text
-    assert 'QuartoDashboardUtils.showPage("#station")' in text
     assert "selectedStation = Generators.observe(" in text
+    # One place knows what a station URL looks like, so the popups, the search
+    # results, the neighbour lists and the channel cannot disagree.
+    assert "function stationHref(key" in text
+    assert '"station.html?station=" + encodeURIComponent(key)' in text
+    assert "QuartoDashboardUtils" not in text
+
+
+def test_the_controls_travel_with_a_link():
+    """Each page is its own document. Without this the three shared controls
+    silently reset on every navigation, and a shared link shows the recipient
+    different units from the sender."""
+    text = read_qmd()
+    assert "CONTROL_PARAMS = {" in text
+    assert "function withControls(href)" in text
+    assert "controlLinkCarrier = {" in text
+    # The query string rather than storage, so a link carries what it shows.
+    assert "localStorage" not in text
 
 
 def test_station_history_is_always_filtered_by_station_key():

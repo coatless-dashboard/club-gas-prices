@@ -90,35 +90,6 @@ $navbar-fg: #f4f7f8 !default;
   cursor: not-allowed;
 }
 
-// A chart card holds its content at the top. Quarto wraps each chunk's hidden
-// source in a scaffold it marks `flex: 1 1 auto`, so the scaffold grows to a
-// share of the card and pushes the chart down the page -- 137px of nothing
-// above the Trends chart before this.
-.cgp-chart-card .cell-output-display,
-.cgp-chart-card .html-fill-item {
-  justify-content: flex-start;
-}
-
-.cgp-chart-card .code-copy-outer-scaffold {
-  flex: 0 0 auto;
-}
-
-// The two outbound links on a station.
-.cgp-station-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.2rem 1rem;
-}
-
-// Direction of a price move.
-.cgp-up {
-  color: var(--cgp-ramp-5);
-}
-
-.cgp-down {
-  color: var(--cgp-ramp-1);
-}
-
 // The key for a dot mark, rather than for a band.
 .cgp-legend .cgp-swatch-dot {
   width: 12px;
@@ -434,19 +405,16 @@ $navbar-fg: #f4f7f8 !default;
   width: auto;
 }
 
-// A card holding only controls lays them out along the row instead of stacking
-// them down the left edge and leaving the rest of the card empty.
-.cgp-controls-card .card-body {
+// A panel holding only controls lays them out along the row instead of
+// stacking them down the left edge.
+.cgp-controls-card {
   display: flex;
   flex-flow: row wrap;
   align-items: flex-start;
   gap: 0.2rem 1.8rem;
-  padding-top: 0.7rem;
-  padding-bottom: 0.3rem;
-  overflow-x: auto;
 }
 
-.cgp-controls-card .card-body > * {
+.cgp-controls-card > * {
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -466,14 +434,52 @@ $navbar-fg: #f4f7f8 !default;
   margin-bottom: 0.5rem;
 }
 
-// Landing on a page hash scrolls that section into view, and on a viewport
-// short enough for the page to overflow that carries the header off the top --
-// taking the only navigation with it, and on a phone the nav is already behind
-// a hamburger. Pin it so it cannot leave.
-#quarto-dashboard-header {
+// The page scrolls now, so the navigation and the three controls that drive
+// every chart have to stay put; scrolling a chart out from under its own units
+// is how a reader misreads one.
+.navbar {
   position: sticky;
   top: 0;
   z-index: 1030;
+}
+
+.cgp-controlbar {
+  position: sticky;
+  top: 3.25rem;
+  z-index: 1020;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.4rem 2rem;
+  padding: 0.6rem 0 0.7rem;
+  margin-bottom: 1rem;
+  background: var(--bs-body-bg);
+  border-bottom: 1px solid var(--cgp-grid);
+}
+
+.cgp-controlbar .cgp-field {
+  margin-bottom: 0;
+}
+
+.cgp-controlbar .cgp-notice {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+// A panel is what a card was: a titled block of content, sized by what is in
+// it rather than by a share of the viewport.
+.cgp-panel {
+  border: 1px solid var(--cgp-control-border);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem 0.9rem;
+  margin-bottom: 1.25rem;
+  background: var(--cgp-control-bg);
+}
+
+h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 0.45rem;
 }
 
 // The color control, its legend and the country jump-buttons, in one flow.

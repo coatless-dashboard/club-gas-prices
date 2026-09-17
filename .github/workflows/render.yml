@@ -129,18 +129,14 @@ jobs:
 
       - name: Render the dashboard
         if: ${{ steps.current.outputs.has_data == 'true' }}
-        run: quarto render site/index.qmd
+        run: quarto render site
 
       - name: Stage _site
         if: ${{ steps.current.outputs.has_data == 'true' }}
         run: |
           set -euo pipefail
-          rm -rf _site
-          mkdir -p _site
-          cp site/index.html _site/index.html
-          if [ -d site/index_files ]; then
-            cp -R site/index_files _site/index_files
-          fi
+          # The project writes straight into _site now, so staging is only the
+          # data the pages fetch at runtime plus the leak check.
           cp -R site/data _site/data
           leaked="$(find _site \( -name '*.qmd' -o -name '*.scss' \) -print)"
           if [ -n "$leaked" ]; then

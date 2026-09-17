@@ -1,3 +1,8 @@
 data/
 index.html
 index_files/
+*.html
+*_files/
+
+/.quarto/
+**/*.quarto_ipynb

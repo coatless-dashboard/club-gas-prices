@@ -1,0 +1,968 @@
+<!-- Included by every page. Each page is its own OJS runtime, so these
+     cells are evaluated once per page rather than shared between them. -->
+
+```{ojs}
+//| output: false
+LITRES_PER_GALLON = 3.785411784
+
+COUNTRY_ORDER = ["US", "CA", "MX", "GB", "AU", "JP", "TW"]
+
+// `X = ({...})` makes Quarto's OJS cell splitter swallow the rest of the
+// chunk, silently: every later cell in it goes undefined. Objects are
+// returned from a block cell instead.
+COUNTRY_NAMES = {
+  return {
+    US: "United States",
+    CA: "Canada",
+    MX: "Mexico",
+    GB: "United Kingdom",
+    AU: "Australia",
+    JP: "Japan",
+    TW: "Taiwan"
+  };
+}
+
+// Okabe-Ito, which stays distinguishable for the common color-vision
+// deficiencies. TW takes a brown in place of Okabe-Ito yellow, which is
+// illegible on a light background.
+COUNTRY_COLORS = {
+  return {
+    US: "#0072B2",
+    CA: "#E69F00",
+    MX: "#009E73",
+    GB: "#CC79A7",
+    AU: "#56B4E9",
+    JP: "#D55E00",
+    TW: "#8C6D31"
+  };
+}
+
+GRADE_LABELS = {
+  return {regular: "Regular", premium: "Premium", diesel: "Diesel"};
+}
+
+meta = FileAttachment("data/meta.json").json()
+
+latest = FileAttachment("data/latest.json").json()
+
+stationsAll = FileAttachment("data/stations.json").json()
+```
+
+```{ojs}
+//| output: false
+// Quarto sets `quarto-dark` on <body> when the dark theme is active.
+theme = Generators.observe((notify) => {
+  const body = document.body;
+  const read = () => (body.classList.contains("quarto-dark") ? "dark" : "light");
+  let current = read();
+  notify(current);
+  // Only emit on a real change. Leaflet rewrites body's class list during a
+  // click, and re-emitting the same theme there rebuilt the marker layer out
+  // from under the popup that click had just opened.
+  const observer = new MutationObserver(() => {
+    const next = read();
+    if (next === current) return;
+    current = next;
+    notify(next);
+  });
+  observer.observe(body, {attributes: true, attributeFilter: ["class"]});
+  return () => observer.disconnect();
+})
+
+palette = {
+  theme; // re-read the tokens whenever the theme flips
+  const style = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => {
+    const value = style.getPropertyValue(name);
+    return value && value.trim() ? value.trim() : fallback;
+  };
+  return {
+    ramp: [
+      read("--cgp-ramp-1", "#2a6f97"),
+      read("--cgp-ramp-2", "#61a5c2"),
+      read("--cgp-ramp-3", "#e9c46a"),
+      read("--cgp-ramp-4", "#e76f51"),
+      read("--cgp-ramp-5", "#b3261e")
+    ],
+    missing: read("--cgp-missing", "#9aa0a6"),
+    stroke: read("--cgp-marker-stroke", "#ffffff"),
+    muted: read("--cgp-muted", "#5b6770"),
+    grid: read("--cgp-grid", "rgba(27,31,35,0.12)"),
+    text: read("--bs-body-color", "#1b1f23"),
+    // The tip's own background, so it stays readable in either theme.
+    surface: read("--cgp-control-bg", "#ffffff")
+  };
+}
+
+// Each page declares whether it queries the release. A page that does not --
+// the Map and About -- never downloads DuckDB-WASM at all. In the dashboard
+// this took a MutationObserver watching which tab pane was active, because
+// every cell of every page ran at load; a site with a page per view does not
+// need one.
+// The one and only DuckDBClient.of call on a page.
+db = pageWantsDb
+  ? DuckDBClient.of({
+      summary_daily: FileAttachment("data/summary_daily.parquet"),
+      history: FileAttachment("data/history.parquet")
+    })
+  : null
+
+nowTick = Generators.observe((notify) => {
+  notify(new Date());
+  const timer = setInterval(() => notify(new Date()), 60000);
+  return () => clearInterval(timer);
+})
+```
+
+```{ojs}
+//| output: false
+// The three controls that mean the same thing on every page. Each page is its
+// own document, so their values have to survive a real navigation. They live in
+// the query string rather than in storage, because a link has to carry what the
+// sender was looking at: with storage, the same URL shows two people different
+// units and neither can tell.
+CONTROL_PARAMS = {
+  return {grade: "grade", currency: "cur", volume: "vol"};
+}
+
+function controlFromUrl(name, fallback, allowed) {
+  const key = CONTROL_PARAMS[name];
+  const value = key && new URLSearchParams(location.search).get(key);
+  return value && allowed.includes(value) ? value : fallback;
+}
+
+// Append the current control values to a same-site link.
+function withControls(href) {
+  const url = new URL(href, location.href);
+  const current = new URLSearchParams(location.search);
+  for (const key of Object.values(CONTROL_PARAMS)) {
+    const value = current.get(key);
+    if (value != null && !url.searchParams.has(key)) url.searchParams.set(key, value);
+  }
+  return url.pathname.split("/").pop() + url.search + url.hash;
+}
+
+// A dashboard rewrote every Plot.plot call to inject the card's width. A site
+// does not, and a chart that says nothing falls to Plot's 640px default and
+// stops being responsive. `width` is the OJS builtin that tracks the page.
+chartWidth = Math.max(320, Math.min(width - 32, 1180))
+
+function radioControl(name, entries, value, label) {
+  const keys = entries.map((entry) => entry[1]);
+  const start = CONTROL_PARAMS[name] ? controlFromUrl(name, value, keys) : value;
+  const input = Inputs.radio(new Map(entries), {label, value: start});
+  input.setAttribute("data-control", name);
+  input.classList.add("cgp-field");
+  // Stable hooks for the smoke test: Observable Inputs give the radios no
+  // value attribute of their own.
+  input.querySelectorAll("input[type=radio]").forEach((el, i) => {
+    el.setAttribute("data-value", keys[i]);
+  });
+  if (CONTROL_PARAMS[name]) {
+    input.addEventListener("input", () => {
+      const url = new URL(location.href);
+      url.searchParams.set(CONTROL_PARAMS[name], input.value);
+      history.replaceState({}, "", url);
+    });
+  }
+  return input;
+}
+
+// Every in-site link carries the controls forward. Without this the state
+// silently resets on each navigation, which is the failure mode to watch for.
+controlLinkCarrier = {
+  const onClick = (event) => {
+    const link = event.target.closest && event.target.closest("a[href]");
+    if (!link || event.defaultPrevented || event.metaKey || event.ctrlKey) return;
+    const url = new URL(link.getAttribute("href"), location.href);
+    if (url.origin !== location.origin || !url.pathname.endsWith(".html")) return;
+    link.setAttribute("href", withControls(link.getAttribute("href")));
+  };
+  document.addEventListener("click", onClick, true);
+  invalidation.then(() => document.removeEventListener("click", onClick, true));
+  return true;
+}
+
+// Observable Inputs come with a notebook layout; `cgp-field` restyles them as
+// stacked groups so every control on the page reads the same way.
+function asField(input, {inline = false} = {}) {
+  input.classList.add("cgp-field");
+  if (inline) input.classList.add("cgp-field--inline");
+  return input;
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function perVolume(valuePerLitre, vol) {
+  if (valuePerLitre == null || !isFinite(valuePerLitre)) return null;
+  return vol === "gal" ? valuePerLitre * LITRES_PER_GALLON : valuePerLitre;
+}
+
+// A hover tip. `title:` on a mark only gets the browser's own tooltip, which
+// takes a second to appear and cannot be styled; Plot's tip mark follows the
+// pointer and reads the same channels.
+function tipStyle() {
+  return {
+    fill: palette.surface,
+    stroke: palette.grid,
+    fontSize: 12,
+    lineHeight: 1.3
+  };
+}
+
+// Leaflet.markercluster attaches itself to the global L, so it is loaded as a
+// script tag rather than imported. Everything the map does waits on this cell,
+// which resolves to L either way: if the CDN is unreachable the map still draws,
+// just without grouping.
+clusterL = {
+  const CDN = "https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/";
+  if (!L.markerClusterGroup) {
+    for (const file of ["MarkerCluster.css", "MarkerCluster.Default.css"]) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = CDN + file;
+      document.head.appendChild(link);
+    }
+    // The plugin is a UMD bundle, and OJS provides an AMD `define`: loaded as a
+    // plain script it registers as an anonymous module and never patches the
+    // global L the map uses. Running it with `define`, `module` and `exports`
+    // shadowed as parameters sends it down its browser branch instead. Blanking
+    // the real globals would do it too, and breaks every cell still loading.
+    try {
+      const response = await fetch(CDN + "leaflet.markercluster.js");
+      if (!response.ok) throw new Error(`markercluster: HTTP ${response.status}`);
+      const source = await response.text();
+      new Function("define", "module", "exports", source)(undefined, undefined, undefined);
+      if (!L.markerClusterGroup) throw new Error("markercluster did not attach to L");
+    } catch (error) {
+      console.warn("[cgp]", error.message, "- the map will not group stations");
+    }
+  }
+  return L;
+}
+
+function fmtNumber(value, digits) {
+  return value == null || !isFinite(value) ? "—" : value.toFixed(digits);
+}
+
+function gradeEntry(station, key) {
+  return station && station.grades ? station.grades[key] || null : null;
+}
+
+function stationPrice(station, key, cur, vol) {
+  const entry = gradeEntry(station, key);
+  if (!entry) return null;
+  const perLitre = cur === "USD" ? entry.price_usd_per_litre : entry.price_local_per_litre;
+  return perVolume(perLitre, vol);
+}
+
+function quantileSorted(sorted, p) {
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const h = (sorted.length - 1) * p;
+  const lo = Math.floor(h);
+  const hi = Math.ceil(h);
+  return sorted[lo] + (h - lo) * (sorted[hi] - sorted[lo]);
+}
+
+function colorForFraction(t, pal) {
+  if (t == null || !isFinite(t)) return pal.missing;
+  const index = Math.min(pal.ramp.length - 1, Math.max(0, Math.floor(t * pal.ramp.length)));
+  return pal.ramp[index];
+}
+
+function hoursAgo(iso, now) {
+  if (!iso) return null;
+  const then = new Date(iso);
+  if (isNaN(then)) return null;
+  return (now.getTime() - then.getTime()) / 3600000;
+}
+
+function captureIdToDate(captureId) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})Z$/.exec(captureId || "");
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+}
+
+function toDay(value) {
+  return new Date(value + "T00:00:00Z");
+}
+
+function sqlList(values) {
+  return values.map((v) => "'" + String(v).replace(/'/g, "''") + "'").join(", ");
+}
+
+function sqlText(value) {
+  return "'" + String(value).replace(/'/g, "''") + "'";
+}
+
+function haversineKm(aLat, aLon, bLat, bLon) {
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+```
+
+```{ojs}
+//| output: false
+volumeLabel = volume === "gal" ? "per US gallon" : "per litre"
+
+volumeShort = volume === "gal" ? "/gal" : "/L"
+
+priceDigits = volume === "gal" ? 3 : 4
+
+currencyOf = {
+  const map = new Map();
+  for (const station of latest) {
+    const entry =
+      gradeEntry(station, "regular") ||
+      gradeEntry(station, "premium") ||
+      gradeEntry(station, "diesel");
+    if (entry && !map.has(station.country)) map.set(station.country, entry.currency);
+  }
+  return map;
+}
+
+// `costco-gas site-data` writes the staleness window into meta.json; 12 hours
+// is used only if that key is missing or unusable.
+staleAfterHours = {
+  const value = Number(meta.stale_after_hours);
+  return Number.isFinite(value) && value > 0 ? value : 12;
+}
+```
+
+```{ojs}
+//| output: false
+countryBounds = {
+  const box = new Map();
+  const all = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const station of latest) {
+    if (station.lat == null || station.lon == null) continue;
+    const b = box.get(station.country) || [Infinity, Infinity, -Infinity, -Infinity];
+    b[0] = Math.min(b[0], station.lat);
+    b[1] = Math.min(b[1], station.lon);
+    b[2] = Math.max(b[2], station.lat);
+    b[3] = Math.max(b[3], station.lon);
+    box.set(station.country, b);
+    all[0] = Math.min(all[0], station.lat);
+    all[1] = Math.min(all[1], station.lon);
+    all[2] = Math.max(all[2], station.lat);
+    all[3] = Math.max(all[3], station.lon);
+  }
+  const out = new Map();
+  for (const [code, b] of box) out.set(code, [[b[0], b[1]], [b[2], b[3]]]);
+  if (isFinite(all[0])) out.set("__all__", [[all[0], all[1]], [all[2], all[3]]]);
+  return out;
+}
+
+// A shared price axis needs a single currency. USD always is one; local prices
+// are one only when the chart is scoped to a single country, because a
+// country's regions all price in the same currency. Everywhere else the axis
+// has to carry change rather than price.
+function gradeRowHtml(label, entry, vol) {
+  const digits = vol === "gal" ? 3 : 4;
+  const unit = vol === "gal" ? "/gal" : "/L";
+  const localPerVolume = perVolume(entry.price_local_per_litre, vol);
+  const usdPerVolume = perVolume(entry.price_usd_per_litre, vol);
+  const usdCell =
+    usdPerVolume == null
+      ? '<td class="cgp-popup-foot">no USD value</td>'
+      : `<td>${usdPerVolume.toFixed(digits)} USD${unit}</td>`;
+  return (
+    `<tr><td>${escapeHtml(label)}</td>` +
+    `<td>${escapeHtml(entry.price_raw)} ${escapeHtml(entry.price_unit)}</td>` +
+    `<td>${localPerVolume == null ? "—" : localPerVolume.toFixed(digits)} ` +
+    `${escapeHtml(entry.currency)}${unit}</td>` +
+    usdCell +
+    "</tr>"
+  );
+}
+
+function popupHtml(station, vol) {
+  const parts = [];
+  parts.push(
+    `<div class="cgp-popup-title">${escapeHtml(station.name)}` +
+      (station.name_local
+        ? ` <span class="cgp-local">${escapeHtml(station.name_local)}</span>`
+        : "") +
+      "</div>"
+  );
+  const place = [station.city, station.region].filter((v) => v).join(", ");
+  parts.push(
+    `<div class="cgp-popup-place"><span class="cgp-flag">${countryFlag(station.country)}</span> ` +
+      `${escapeHtml(place)}${place ? " · " : ""}` +
+      `${escapeHtml(COUNTRY_NAMES[station.country] || station.country)}</div>`
+  );
+  const rows = [];
+  for (const key of ["regular", "premium", "diesel"]) {
+    const entry = gradeEntry(station, key);
+    if (entry) rows.push(gradeRowHtml(GRADE_LABELS[key], entry, vol));
+  }
+  for (const [raw, entry] of Object.entries(station.other || {})) {
+    rows.push(gradeRowHtml(raw, entry, vol));
+  }
+  parts.push(`<table>${rows.join("")}</table>`);
+  const any =
+    gradeEntry(station, "regular") ||
+    gradeEntry(station, "premium") ||
+    gradeEntry(station, "diesel");
+  if (any && any.currency !== "USD" && any.fx_usd_per_unit != null) {
+    parts.push(
+      `<div class="cgp-popup-foot">1 ${escapeHtml(any.currency)} = ` +
+        `${any.fx_usd_per_unit.toPrecision(6)} USD as of ${escapeHtml(any.fx_rate_date)} ` +
+        `(${escapeHtml(any.fx_source)})</div>`
+    );
+  }
+  const age = hoursAgo(station.captured_at_utc, new Date());
+  if (age != null) {
+    parts.push(
+      `<div class="cgp-popup-foot">updated ${Math.max(0, Math.round(age))} h ago</div>`
+    );
+  }
+  parts.push(
+    `<div class="cgp-popup-foot"><a href="${stationHref(station.station_key)}" ` +
+      `data-station-link="${escapeHtml(station.station_key)}">Station history</a></div>`
+  );
+  return `<div class="cgp-popup">${parts.join("")}</div>`;
+}
+
+// The last point of whichever nearby station sits highest at the end of the
+// window, so its label does not land on top of another line.
+function topNeighbour(rows) {
+  if (!rows.length) return [];
+  const lastDay = Math.max(...rows.map((row) => row.day.getTime()));
+  const atEnd = rows.filter((row) => row.day.getTime() === lastDay);
+  if (!atEnd.length) return [];
+  return [atEnd.reduce((best, row) => (row.value > best.value ? row : best))];
+}
+
+// Plot's color legend keys a color scale; what needs explaining on the
+// compare chart is a shape, so the key is HTML and reuses the map legend's
+// classes. It names marks and never units, so it reads true in either currency.
+function spreadKeyEl(dotWords, barWords, note) {
+  return html`<div class="cgp-legend">
+    <span class="cgp-swatch cgp-swatch-dot" style=${"background:" + palette.muted}></span>
+    <span>${dotWords}</span>
+    <span class="cgp-swatch" style=${"background:" + palette.muted + ";opacity:0.32"}></span>
+    <span>${barWords}</span>
+    <span class="cgp-legend-note">${note}</span>
+  </div>`;
+}
+
+// The earliest day every series covers: the LATEST of their first days, not the
+// earliest. A shared "change since <date>" axis needs one date that every line
+// has a real reading for; anchoring each line on its own first day and printing
+// one date on the axis is exactly the claim this view exists to avoid.
+function commonBaseDay(seriesList) {
+  const firsts = seriesList
+    .map((rows) => (rows.length ? rows[0].day.getTime() : null))
+    .filter((t) => t != null);
+  return firsts.length ? new Date(Math.max(...firsts)) : null;
+}
+
+// The reading a series is measured from: the base day, or the first day after
+// it that has a value. A feed that gapped is anchored on its own first day and
+// says so in its tooltip rather than being silently rebased.
+function anchorRow(rows, baseDay) {
+  if (!baseDay) return null;
+  return rows.find((row) => row.day >= baseDay && row.value != null) || null;
+}
+
+// A ratio of two values in the SAME currency, so the unit cancels before
+// anything is plotted.
+function pctFrom(value, base) {
+  return value == null || !(base > 0) ? null : (value / base - 1) * 100;
+}
+
+function fmtPct(value) {
+  if (value == null || !isFinite(value)) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+// tableau10, the only ordinal scheme Plot 0.6.11 ships that suits this, has ten
+// colors. More series than that and it cycles without saying so.
+PALETTE_SERIES_CAP = 10;
+
+// A dot per reading is a good mark while the readings are far apart and a
+// texture once they are not: past roughly one every four pixels it stops
+// marking anything and starts implying a precision the line already carries.
+// At four captures a day this arrives after about seven months.
+function showDots(pointsPerSeries, plotWidth = 790) {
+  return pointsPerSeries <= plotWidth / 4;
+}
+
+// Stations behind the latest day, from a column the query already selects and
+// nothing drew.
+function latestStationCount(rows) {
+  let newest = "";
+  for (const row of rows) if (row.d > newest) newest = row.d;
+  return rows
+    .filter((row) => row.d === newest)
+    .reduce((total, row) => total + (row.n_stations || 0), 0);
+}
+
+// What the chart covers, said once rather than hovered for.
+function coverageNote(days, from, to, stations) {
+  const span = `${days} day${days === 1 ? "" : "s"}, ${from} to ${to}`;
+  return stations ? `${span} · ${stations} stations on the latest day.` : `${span}.`;
+}
+
+function dayText(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function stationLinksEl(meta) {
+  const directions = directionsUrl(meta);
+  const warehouse = warehouseUrl(meta);
+  if (!directions && !warehouse) return "";
+  const links = [];
+  if (directions) {
+    links.push(
+      html`<a href=${directions} target="_blank" rel="noopener">Directions on Google Maps</a>`
+    );
+  }
+  if (warehouse) {
+    links.push(html`<a href=${warehouse} target="_blank" rel="noopener">Costco store page</a>`);
+  }
+  return html`<div class="cgp-notice cgp-station-links">${links}</div>`;
+}
+
+// Costco publishes a store page per warehouse on its SAP storefronts, but only
+// some of them answer at the bare path the store feed gives. Checked on
+// 2026-09-16: mx, au and jp return 200; co.uk and com.tw return 404 both bare
+// and locale-prefixed, and the US and Canadian feeds carry no store URL at all.
+// Only the three that answer get a link.
+// Written as a block with an explicit return, the way every other constant in
+// this file is: in OJS `NAME = {…}` is a block, not an object literal, and the
+// parenthesised form does not survive here either.
+WAREHOUSE_PAGE = {
+  return {
+    MX: {base: "https://www.costco.com.mx/store/", field: "alt_id"},
+    AU: {base: "https://www.costco.com.au/store/", field: "alt_id"},
+    JP: {base: "https://www.costco.co.jp/store/", field: "source_station_id"}
+  };
+}
+
+function warehouseUrl(meta) {
+  const spec = meta && WAREHOUSE_PAGE[meta.country];
+  const name = spec && meta[spec.field];
+  return name ? spec.base + encodeURIComponent(name) : null;
+}
+
+// Google's Maps URLs API. Coordinates rather than the address string: they are
+// unambiguous, and address quality varies a lot between these seven countries.
+// The address is the fallback for a station captured without coordinates.
+function directionsUrl(meta) {
+  if (!meta) return null;
+  if (meta.lat != null && meta.lon != null) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${meta.lat},${meta.lon}`;
+  }
+  const parts = [meta.address, meta.city, meta.region, meta.postcode, COUNTRY_NAMES[meta.country]]
+    .filter((v) => v)
+    .join(", ");
+  return parts
+    ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(parts)}`
+    : null;
+}
+
+// Consecutive readings where the price moved, newest first. Derived from the
+// series already fetched for the chart rather than a second query, and it
+// carries what it moved FROM, which the flag alone does not.
+function priceChanges(rows, limit = 30) {
+  const byGrade = new Map();
+  for (const row of rows) {
+    if (row.price_local_per_litre == null) continue;
+    if (!byGrade.has(row.grade)) byGrade.set(row.grade, []);
+    byGrade.get(row.grade).push(row);
+  }
+  const out = [];
+  for (const [gradeKey, series] of byGrade) {
+    series.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+    for (let i = 1; i < series.length; i += 1) {
+      if (!series[i].changed) continue;
+      out.push({
+        grade: gradeKey,
+        d: series[i].d,
+        from: series[i - 1].price_local_per_litre,
+        to: series[i].price_local_per_litre,
+        fromUsd: series[i - 1].price_usd_per_litre,
+        toUsd: series[i].price_usd_per_litre,
+        currency: series[i].currency
+      });
+    }
+  }
+  out.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+  return out.slice(0, limit);
+}
+
+// The rate the USD column was converted at, stored with the reading rather than
+// looked up now, so the figure shown is the one the conversion used. A station
+// that prices in USD has nothing to convert and says so.
+function rateNote(station) {
+  const entry =
+    station &&
+    (gradeEntry(station, "regular") ||
+      gradeEntry(station, "premium") ||
+      gradeEntry(station, "diesel"));
+  if (!entry) return "";
+  if (entry.currency === "USD") {
+    return html`<div class="cgp-notice">Published in USD, so no conversion is applied.</div>`;
+  }
+  if (entry.fx_usd_per_unit == null) {
+    return html`<div class="cgp-notice">No exchange rate was available for this reading, so the
+      USD column is empty.</div>`;
+  }
+  return html`<div class="cgp-notice">1 ${entry.currency} =
+    ${entry.fx_usd_per_unit.toPrecision(6)} USD, the
+    ${entry.fx_rate_date ? `${entry.fx_rate_date} ` : ""}reference rate stored with this reading
+    (${entry.fx_source}).</div>`;
+}
+
+// The country's flag, from its two-letter code. Regional indicator symbols sit
+// at U+1F1E6 in the same order as A-Z.
+function countryFlag(code) {
+  if (!code || code.length !== 2) return "";
+  return String.fromCodePoint(
+    ...[...code.toUpperCase()].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65)
+  );
+}
+
+// What hovering a station shows: enough to compare it with its neighbours
+// without opening anything. The click popup keeps the full detail -- every
+// grade as published, the rate used, and the link into its history.
+function hoverHtml(station) {
+  const entry =
+    gradeEntry(station, "regular") ||
+    gradeEntry(station, "premium") ||
+    gradeEntry(station, "diesel");
+  const code = currency === "USD" ? "USD" : entry ? entry.currency : "";
+  const digits = volume === "gal" ? 2 : 3;
+  const priced = ["regular", "premium", "diesel"]
+    .map((key) => [GRADE_LABELS[key], stationPrice(station, key, currency, volume)])
+    .filter(([, price]) => price != null)
+    .map(([label, price]) => `${label} <b>${fmtNumber(price, digits)}</b>`);
+  const place = [station.city, station.region].filter((v) => v).join(", ");
+  const age = hoursAgo(station.captured_at_utc, nowTick);
+  const parts = [
+    `<div class="cgp-hover-name">${escapeHtml(station.name)}</div>`,
+    `<div class="cgp-hover-place"><span class="cgp-flag">${countryFlag(
+      station.country
+    )}</span> ${escapeHtml(place)}${place ? " · " : ""}${escapeHtml(
+      COUNTRY_NAMES[station.country] || station.country
+    )}</div>`
+  ];
+  if (priced.length) {
+    parts.push(
+      `<div class="cgp-hover-prices">${priced.join(" · ")} ${escapeHtml(code)}${escapeHtml(
+        volumeShort
+      )}</div>`
+    );
+  } else {
+    parts.push(`<div class="cgp-hover-prices">no price for this grade</div>`);
+  }
+  if (age != null) {
+    parts.push(
+      `<div class="cgp-hover-foot">read ${Math.max(0, Math.round(age))} h ago · click for detail</div>`
+    );
+  }
+  return `<div class="cgp-hover">${parts.join("")}</div>`;
+}
+
+// A cluster is colored by the median of the stations inside it, so a group
+// still reads as cheap or dear rather than as a neutral blob.
+function clusterIcon(el, cluster) {
+  const pal = el._pal || palette;
+  const fractions = cluster
+    .getAllChildMarkers()
+    .map((marker) => marker._cgpFraction)
+    .filter((f) => f != null)
+    .sort((a, b) => a - b);
+  // A true median: with two stations the upper one alone would paint the whole
+  // group its color.
+  const mid = fractions.length / 2;
+  const median = !fractions.length
+    ? null
+    : fractions.length % 2
+      ? fractions[Math.floor(mid)]
+      : (fractions[mid - 1] + fractions[mid]) / 2;
+  const fill = median == null ? pal.missing : colorForFraction(median, pal);
+  const count = cluster.getChildCount();
+  const size = count < 10 ? 32 : count < 100 ? 40 : 48;
+  return L.divIcon({
+    className: "cgp-cluster",
+    iconSize: [size, size],
+    html:
+      `<span style="background:${fill};border-color:${pal.stroke}">` +
+      `${count}</span>`
+  });
+}
+
+// A graduated symbol: costlier stations draw larger, and every symbol grows with
+// zoom. Zoomed out, small dots keep a continent readable instead of merging into
+// one blob; zoomed in, the symbols separate and carry their price.
+function markerRadius(zoom, fraction) {
+  const base = Math.min(11.5, 3.4 + zoom * 0.7);
+  const weight = fraction == null ? 0.7 : 0.62 + fraction * 0.7;
+  // Never below 4px: a symbol smaller than that is hard to see and harder to
+  // hit, which costs more than the extra overlap it saves.
+  const r = Math.max(4, Math.min(14, base * weight));
+  return Math.round(r * 10) / 10;
+}
+
+function usdFraction(station, grade, vol, domain) {
+  if (!domain) return null;
+  const usd = stationPrice(station, grade, "USD", vol);
+  if (usd == null) return null;
+  return Math.min(1, Math.max(0, (usd - domain[0]) / (domain[1] - domain[0])));
+}
+
+// Above this zoom the map is showing a place rather than a hemisphere, so
+// grouping stops helping and every station stands on its own.
+LABEL_ZOOM = 8;
+
+function applyZoomStyling(el) {
+  const map = el._map;
+  if (!map) return;
+  const zoom = map.getZoom();
+  el.classList.toggle("cgp-map-zoomed", zoom >= LABEL_ZOOM);
+  el._markers.eachLayer((marker) => {
+    if (marker.setRadius) marker.setRadius(markerRadius(zoom, marker._cgpFraction));
+  });
+}
+
+// Rebuilt whenever Grade, Currency, Volume or the color mode changes.
+```
+
+```{ojs}
+//| output: false
+compareRows = db
+  ? db.query(`
+      SELECT country,
+             strftime(capture_date, '%Y-%m-%d') AS d,
+             n_stations,
+             n_stations_usd,
+             median_local_per_litre,
+             p25_local_per_litre,
+             p75_local_per_litre,
+             median_usd_per_litre,
+             p25_usd_per_litre,
+             p75_usd_per_litre
+      FROM summary_daily
+      WHERE level = 'country' AND grade = ${sqlText(grade)}
+      ORDER BY country, capture_date
+    `)
+  : []
+
+// Each country uses its own newest day that has stations; an older day is stale.
+function newestByKey(rows, keyName) {
+  const newestFor = new Map();
+  for (const row of rows) {
+    if (!(row.n_stations > 0)) continue;
+    const previous = newestFor.get(row[keyName]);
+    if (!previous || row.d > previous.d) newestFor.set(row[keyName], row);
+  }
+  let newest = "";
+  for (const row of newestFor.values()) if (row.d > newest) newest = row.d;
+  return {newestFor, newest};
+}
+
+compareLatest = {
+  const newestByCountry = new Map();
+  for (const row of compareRows) {
+    if (!(row.n_stations > 0)) continue;
+    const previous = newestByCountry.get(row.country);
+    if (!previous || row.d > previous.d) newestByCountry.set(row.country, row);
+  }
+  let newest = "";
+  for (const row of newestByCountry.values()) if (row.d > newest) newest = row.d;
+  const rows = COUNTRY_ORDER.map((code) => {
+    const row = newestByCountry.get(code);
+    if (!row) return {country: code, sold: false, stale: false};
+    return Object.assign({}, row, {sold: true, stale: row.d < newest});
+  });
+  return {rows, newest};
+}
+
+function compareTableEl() {
+  const body = compareLatest.rows.map((row) => {
+    if (!row.sold) {
+      return html`<tr><td>${COUNTRY_NAMES[row.country]}</td>
+        <td colspan="5" class="cgp-stale">not sold</td></tr>`;
+    }
+    return html`<tr>
+      <td>${COUNTRY_NAMES[row.country]}${
+        row.stale ? html` <span class="cgp-stale">stale</span>` : ""
+      }</td>
+      <td>${currencyOf.get(row.country) || ""}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(row.median_local_per_litre, volume), priceDigits)}</td>
+      <td class="cgp-num">${fmtNumber(
+        perVolume(row.p25_local_per_litre, volume),
+        priceDigits
+      )}–${fmtNumber(perVolume(row.p75_local_per_litre, volume), priceDigits)}</td>
+      <td class="cgp-num">${row.n_stations}</td>
+      <td>${row.d}</td>
+    </tr>`;
+  });
+  return html`<table class="cgp-table">
+    <thead><tr>
+      <th>Country</th><th>Currency</th>
+      <th class="cgp-num">Median ${volumeShort}</th>
+      <th class="cgp-num">p25–p75</th>
+      <th class="cgp-num">Stations</th>
+      <th>Day</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table>`;
+}
+```
+
+```{ojs}
+//| output: false
+trendCountryRows = db
+  ? db.query(`
+      SELECT country,
+             strftime(capture_date, '%Y-%m-%d') AS d,
+             n_stations,
+             median_local_per_litre,
+             p25_local_per_litre,
+             p75_local_per_litre,
+             median_usd_per_litre,
+             p25_usd_per_litre,
+             p75_usd_per_litre
+      FROM summary_daily
+      WHERE level = 'country' AND grade = ${sqlText(grade)}
+      ORDER BY country, capture_date
+    `)
+  : []
+```
+
+```{ojs}
+//| output: false
+// The selection lives in the query string; the hash is only ever a page id.
+function onStationPage() {
+  return /(^|\/)station(\.html)?$/.test(location.pathname.replace(/\/$/, "/index"));
+}
+
+// One place that knows what a station's URL looks like, so the popups, the
+// search results, the neighbour lists and the channel cannot disagree.
+function stationHref(key, {carry = true} = {}) {
+  const base = "station.html?station=" + encodeURIComponent(key);
+  return carry ? withControls(base) : base;
+}
+
+stationChannel = {
+  const listeners = new Set();
+  return {
+    read: () => new URLSearchParams(location.search).get("station"),
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    notify(key) {
+      for (const fn of listeners) fn(key);
+    },
+    open(key) {
+      const target = stationHref(key);
+      // On the station page this is a selection; anywhere else it is a
+      // navigation, because each page is its own document now.
+      if (onStationPage()) {
+        history.pushState({}, "", target);
+        // pushState fires no event, so tell the generator directly.
+        this.notify(key);
+      } else {
+        location.href = target;
+      }
+    }
+  };
+}
+
+selectedStation = Generators.observe((notify) => {
+  notify(stationChannel.read());
+  const onPop = () => notify(stationChannel.read());
+  window.addEventListener("popstate", onPop);
+  const unsubscribe = stationChannel.subscribe((key) => notify(key));
+  return () => {
+    window.removeEventListener("popstate", onPop);
+    unsubscribe();
+  };
+})
+
+selectedMeta = selectedStation
+  ? stationsAll.find((row) => row.station_key === selectedStation) || null
+  : null
+
+selectedLatest = selectedStation
+  ? latest.find((row) => row.station_key === selectedStation) || null
+  : null
+
+nearestStations = {
+  // A station with no current price still has coordinates in its record, and
+  // its neighbours are exactly what a reader wants when it has stopped posting.
+  const origin = selectedLatest || selectedMeta;
+  if (!origin || origin.lat == null) return [];
+  return latest
+    .filter(
+      (row) =>
+        row.station_key !== origin.station_key &&
+        row.country === origin.country &&
+        row.status === "active" &&
+        row.lat != null &&
+        row.lon != null
+    )
+    .map((row) => ({
+      station_key: row.station_key,
+      name: row.name,
+      km: haversineKm(origin.lat, origin.lon, row.lat, row.lon)
+    }))
+    .sort((a, b) => a.km - b.km)
+    .slice(0, 5);
+}
+
+stationHistoryRows = {
+  if (!db || !selectedMeta) return [];
+  const keys = [selectedMeta.station_key, ...nearestStations.map((row) => row.station_key)];
+  return db.query(`
+    SELECT station_key,
+           grade,
+           strftime(capture_date, '%Y-%m-%d') AS d,
+           price_local_per_litre,
+           price_usd_per_litre,
+           currency,
+           changed,
+           moved_intraday
+    FROM history
+    WHERE station_key IN (${sqlList(keys)})
+    ORDER BY station_key, grade, capture_date
+  `);
+}
+
+stationMedianRows = {
+  if (!db || !selectedMeta) return [];
+  const level = selectedMeta.region == null ? "country" : "region";
+  const regionClause =
+    selectedMeta.region == null ? "region IS NULL" : `region = ${sqlText(selectedMeta.region)}`;
+  return db.query(`
+    SELECT strftime(capture_date, '%Y-%m-%d') AS d,
+           median_local_per_litre,
+           median_usd_per_litre
+    FROM summary_daily
+    WHERE level = '${level}'
+      AND country = ${sqlText(selectedMeta.country)}
+      AND ${regionClause}
+      AND grade = ${sqlText(grade)}
+    ORDER BY capture_date
+  `);
+}
+```
+

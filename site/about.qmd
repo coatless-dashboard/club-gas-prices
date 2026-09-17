@@ -1,0 +1,132 @@
+---
+title: "About"
+---
+
+{{< include _shared.qmd >}}
+
+```{ojs}
+//| output: false
+// Only the pages that query the release load DuckDB; the others never
+// pay for it. This replaced a MutationObserver that watched which tab
+// pane was active, which a multi-page site has no need of.
+pageWantsDb = false
+```
+
+{{< include _controls.qmd >}}
+
+## What this is
+::: {.cgp-panel}
+
+```{ojs}
+aboutHeader = html`<div>
+  <p>${meta.notice}</p>
+  <p class="cgp-notice">Built ${meta.built_at_utc} from capture ${meta.capture_id}.
+    Data: <a href=${meta.releases.current}>current release</a> ·
+    <a href=${meta.releases.all}>all releases</a> ·
+    <a href="https://github.com/coatless-dashboard/costco-gas-prices#schema-capture-grain-in-file-order">column
+    reference</a>.</p>
+</div>`
+```
+
+Prices are read from Costco's own public websites four times a day and stored by
+UTC day. Every row keeps the published value, the unit it was published in, and
+the exchange rate in force when it was collected, so a past day always shows the
+USD value of that day.
+
+| Country | Endpoint, one request unless noted |
+|---|---|
+| United States | `ecom-api.costco.com/core/warehouse-locator/v1/warehouses.json` for metadata, then `www.costco.com/AjaxGetGasPricesService?warehouseid=…` in batches of 10 |
+| Canada | `www.costco.ca/AjaxWarehouseBrowseLookupView?hasGas=true&populateWarehouseDetails=true&countryCode=CA` |
+| Mexico | `www.costco.com.mx/rest/v2/mexico/stores?fields=FULL&…` |
+| United Kingdom | `www.costco.co.uk/rest/v2/uk/stores?fields=FULL&…` |
+| Australia | `www.costco.com.au/rest/v2/australia/stores?fields=FULL&…` |
+| Japan | `www.costco.co.jp/rest/v2/japan/stores?fields=FULL&…` |
+| Taiwan | `www.costco.com.tw/rest/v2/taiwan/stores?fields=FULL&…` |
+
+:::
+
+## Grades
+::: {.cgp-panel}
+
+```{ojs}
+aboutGrades = html`<table class="cgp-table">
+  <thead><tr><th>Country</th><th>Source label</th><th>Grade</th><th>Spec</th>
+    <th>Stated by</th></tr></thead>
+  <tbody>${(meta.grades || []).map(
+    (row) => html`<tr>
+      <td>${COUNTRY_NAMES[row.country] || row.country}</td>
+      <td>${row.grade_raw}</td>
+      <td>${row.grade}</td>
+      <td>${row.spec || "—"}</td>
+      <td>${
+        row.spec_source
+          ? row.spec_source_url
+            ? html`<a href=${row.spec_source_url}>${row.spec_source}</a>`
+            : row.spec_source
+          : "—"
+      }</td>
+    </tr>`
+  )}</tbody>
+</table>`
+```
+
+Grades are not equivalent across countries. Where a source states no octane or
+blend the specification is blank; where it comes from a third party it is marked
+`reported` and links to that source.
+
+:::
+
+
+## Units, rates and caveats
+::: {.cgp-panel}
+
+**Units.** One US gallon is 3.785411784 litres. UK prices are published in
+pence, so `GBp/L` is divided by 100 for the pound figure. Puerto Rico's prices
+are published in USD per litre: #335 regular was 1.097, about 4.15 per gallon,
+and Puerto Rico retail is priced per litre. That unit is inferred, not stated.
+
+**Exchange rates.** Each capture fetches the daily reference rate from
+Frankfurter v2 and stores it with every row. If that fails, a dated
+`@fawazahmed0/currency-api` file is used; if that also fails, the most recent
+stored rate within 7 days is carried forward and labelled
+`carried-forward:<source>`. If no rate is available the USD columns are null:
+those stations are drawn gray on the map, show their local price only, and are
+left out of USD aggregates.
+
+**Filtering.** Placeholder prices are dropped: stations that price before they
+open (the pre-opening 3.999 / 5.999 pattern in the United States, and Canadian
+warehouses with no gas hours), premium-only business-center placeholders, and
+values outside per-unit sanity bounds.
+
+**How fresh a price really is.** A capture records when *we* read a price, not
+when the retailer changed it. The United Kingdom's store feed is served with a
+90-minute cache, and a re-request 73 seconds later returned a byte-identical
+response, so a UK price can be up to about an hour and a half old however often
+this runs. Every country's feed is a published figure rather than a live reading
+from the pump.
+
+**UTC days versus local time.** Days are UTC days. For Japan, Taiwan and
+Australia the last capture of a UTC day arrives early the next local morning, so
+`local_date` in the released rows can be a day ahead of `capture_date`.
+
+**Known limits.** No source publishes a price timestamp, prices change during
+the day, and the storefront APIs declare CDN caching of up to 90 minutes. Costco
+prices are not national averages.
+
+:::
+
+## Attribution
+::: {.cgp-panel}
+
+```{ojs}
+aboutAttribution = {
+  const span = document.createElement("span");
+  span.innerHTML = meta.basemap.attribution;
+  return html`<div class="cgp-notice">Basemap: ${meta.basemap.provider}. ${span}</div>`;
+}
+```
+
+Code is MIT licensed. The data files carry no license claim and include the
+notice above.
+
+:::
