@@ -103,6 +103,7 @@ stationChart = {
   const unit = currency === "USD" ? "USD" : entry ? entry.currency : "local";
   const figure = Plot.plot({
     width: chartWidth,
+    ariaLabel: `${selectedMeta ? selectedMeta.name : "Station"}: ${GRADE_LABELS[grade]} price over time`,
     height: 360,
     marginRight: 80,
     style: {background: "transparent", color: palette.text},

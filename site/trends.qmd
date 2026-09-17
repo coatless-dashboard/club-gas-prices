@@ -148,6 +148,50 @@ html`<div class="cgp-controls-row">${[
 ::: {.cgp-panel .cgp-chart-card}
 
 ```{ojs}
+// How many stations stood behind each day's median, as a strip under the chart
+// rather than a sentence beside it. `n_stations` is already queried and was
+// drawn nowhere, so a reader could not tell a real price move from a day when
+// half the stations were missing.
+function coverageStrip(rows, {label}) {
+  const byDay = new Map();
+  for (const row of rows) {
+    const key = `${row.d} :: ${row.brand || ""}`;
+    byDay.set(key, {
+      day: toDay(row.d),
+      brand: row.brand,
+      series: row.brand ? `${row.country}-${row.brand}` : row.country,
+      country: row.country,
+      n: Number(row.n_stations) || 0
+    });
+  }
+  const data = [...byDay.values()];
+  if (data.length < 2) return "";
+  return Plot.plot({
+    width: chartWidth,
+    // Deliberately not "open stations": a dip is usually a collection failure,
+    // not a closure, and the two read very differently.
+    ariaLabel: `Stations that posted a ${label} price, by day`,
+    height: 70,
+    marginLeft: 52,
+    marginRight: 80,
+    marginBottom: 22,
+    style: {background: "transparent", color: palette.text},
+    x: {label: null, grid: false, ticks: 4},
+    y: {label: "stations", grid: true, nice: true, ticks: 3},
+    marks: [
+      Plot.ruleY([0], {stroke: palette.text, strokeOpacity: 0.2}),
+      Plot.line(data, {
+        x: "day",
+        y: "n",
+        z: "series",
+        curve: "step",
+        stroke: (row) => COUNTRY_COLORS[row.country],
+        strokeWidth: 1.5
+      })
+    ]
+  });
+}
+
 // Every chart on this page is built here, in the card that shows it, the
 // way the Map and Station cards build theirs. Two separate mechanisms
 // require it. An OJS cell's node is inserted where the cell is defined, so
@@ -162,7 +206,13 @@ trendView = {
       .filter((row) => row.median_usd_per_litre != null)
       .map((row) => ({
         country: row.country,
+        brand: row.brand,
+        // The line's identity is the CHAIN in a country, not the country. Two
+        // chains share a country, and a series keyed on country alone would
+        // draw one line zig-zagging between two different companies' prices.
+        series: row.brand ? `${row.country}-${row.brand}` : row.country,
         name: COUNTRY_NAMES[row.country],
+        label: seriesLabel(row.country, row.brand),
         day: toDay(row.d),
         median: perVolume(row.median_usd_per_litre, volume),
         p25: perVolume(row.p25_usd_per_litre, volume),
@@ -179,19 +229,27 @@ trendView = {
           x: "day",
           y1: "p25",
           y2: "p75",
-          z: "country",
+          z: "series",
           fill: (row) => COUNTRY_COLORS[row.country],
           fillOpacity: 0.14
         })
       );
     }
     marks.push(
-      Plot.line(data, {
+      Plot.line(data.filter((row) => !row.brand || row.brand === PRIMARY_BRAND), {
         x: "day",
         y: "median",
-        z: "country",
+        z: "series",
         stroke: (row) => COUNTRY_COLORS[row.country],
         strokeWidth: 2
+      }),
+      Plot.line(data.filter((row) => row.brand && row.brand !== PRIMARY_BRAND), {
+        x: "day",
+        y: "median",
+        z: "series",
+        stroke: (row) => COUNTRY_COLORS[row.country],
+        strokeWidth: 2,
+        strokeDasharray: "4 3"
       }),
       ...(showDots(days.length)
         ? [Plot.dot(data, {x: "day", y: "median", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
@@ -205,8 +263,8 @@ trendView = {
         Plot.selectLast({
           x: "day",
           y: "median",
-          z: "country",
-          text: "country",
+          z: "series",
+          text: "label",
           dx: 14,
           fill: (row) => COUNTRY_COLORS[row.country]
         })
@@ -227,6 +285,7 @@ trendView = {
     );
     const figure = Plot.plot({
       width: chartWidth,
+      ariaLabel: `Median ${GRADE_LABELS[grade]} price over time, by country`,
       height: 420,
       marginRight: 60,
       style: {background: "transparent", color: palette.text},
@@ -234,7 +293,9 @@ trendView = {
       y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
       marks
     });
-    return html`<div>${figure}<div class="cgp-notice">${coverageNote(
+    return html`<div>${figure}${coverageStrip(trendCountryRows, {
+      label: GRADE_LABELS[grade]
+    })}<div class="cgp-notice">${coverageNote(
       days.length,
       dayText(new Date(days[0])),
       dayText(new Date(days[days.length - 1])),
@@ -254,8 +315,11 @@ trendView = {
         volume
       );
       if (value == null) continue;
-      if (!byCountry.has(row.country)) byCountry.set(row.country, []);
-      byCountry.get(row.country).push({
+      const seriesKey = row.brand ? `${row.country}-${row.brand}` : row.country;
+      if (!byCountry.has(seriesKey)) byCountry.set(seriesKey, []);
+      byCountry.get(seriesKey).push({
+        country: row.country,
+        brand: row.brand,
         day: toDay(row.d),
         value,
         p25: perVolume(
@@ -283,8 +347,11 @@ trendView = {
         const pct = pctFrom(row.value, anchor.value);
         if (pct == null) continue;
         data.push({
-          country: code,
-          name: COUNTRY_NAMES[code],
+          country: row.country,
+          brand: row.brand,
+          series: code,
+          name: COUNTRY_NAMES[row.country],
+          label: seriesLabel(row.country, row.brand),
           day: row.day,
           pct,
           p25: pctFrom(row.p25, anchor.value),
@@ -311,7 +378,7 @@ trendView = {
             x: "day",
             y1: "p25",
             y2: "p75",
-            z: "country",
+            z: "series",
             fill: (row) => COUNTRY_COLORS[row.country],
             fillOpacity: 0.12
           }
@@ -319,12 +386,20 @@ trendView = {
       );
     }
     marks.push(
-      Plot.line(data, {
+      Plot.line(data.filter((row) => !row.brand || row.brand === PRIMARY_BRAND), {
         x: "day",
         y: "pct",
-        z: "country",
+        z: "series",
         stroke: (row) => COUNTRY_COLORS[row.country],
         strokeWidth: 2
+      }),
+      Plot.line(data.filter((row) => row.brand && row.brand !== PRIMARY_BRAND), {
+        x: "day",
+        y: "pct",
+        z: "series",
+        stroke: (row) => COUNTRY_COLORS[row.country],
+        strokeWidth: 2,
+        strokeDasharray: "4 3"
       }),
       ...(showDots(days.length)
         ? [Plot.dot(data, {x: "day", y: "pct", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
@@ -334,8 +409,8 @@ trendView = {
         Plot.selectLast({
           x: "day",
           y: "pct",
-          z: "country",
-          text: "country",
+          z: "series",
+          text: "label",
           dx: 14,
           fill: (row) => COUNTRY_COLORS[row.country]
         })
@@ -364,6 +439,7 @@ trendView = {
         : `Change in median ${GRADE_LABELS[grade]} since ${baseText}, each country in its own currency (%)`;
     const figure = Plot.plot({
       width: chartWidth,
+      ariaLabel: `Change in median ${GRADE_LABELS[grade]} since ${baseText}, by country`,
       height: 400,
       marginRight: 60,
       style: {background: "transparent", color: palette.text},
@@ -371,7 +447,9 @@ trendView = {
       y: {label, grid: true, nice: true, tickFormat: fmtPct},
       marks
     });
-    return html`<div>${figure}<div class="cgp-notice">${coverageNote(
+    return html`<div>${figure}${coverageStrip(trendCountryRows, {
+      label: GRADE_LABELS[grade]
+    })}<div class="cgp-notice">${coverageNote(
       days.length,
       dayText(new Date(days[0])),
       dayText(new Date(days[days.length - 1])),
@@ -385,6 +463,9 @@ trendView = {
       if (row.median_local_per_litre == null) continue;
       if (!byCountry.has(row.country)) byCountry.set(row.country, []);
       byCountry.get(row.country).push({
+        country: row.country,
+        brand: row.brand,
+        series: row.brand ? `${row.country}-${row.brand}` : row.country,
         day: toDay(row.d),
         median: perVolume(row.median_local_per_litre, volume),
         p25: perVolume(row.p25_local_per_litre, volume),
@@ -407,7 +488,21 @@ trendView = {
       }
       const unit = `${currencyOf.get(code) || ""} ${volumeShort}`;
       marks.push(
-        Plot.line(rows, {x: "day", y: "median", stroke: COUNTRY_COLORS[code], strokeWidth: 2}),
+        Plot.line(rows.filter((r) => !r.brand || r.brand === PRIMARY_BRAND), {
+          x: "day",
+          y: "median",
+          z: "series",
+          stroke: COUNTRY_COLORS[code],
+          strokeWidth: 2
+        }),
+        Plot.line(rows.filter((r) => r.brand && r.brand !== PRIMARY_BRAND), {
+          x: "day",
+          y: "median",
+          z: "series",
+          stroke: COUNTRY_COLORS[code],
+          strokeWidth: 2,
+          strokeDasharray: "4 3"
+        }),
         Plot.dot(rows, {x: "day", y: "median", r: 2, fill: COUNTRY_COLORS[code]}),
         Plot.tip(
           rows,
@@ -429,6 +524,7 @@ trendView = {
         // to a single column. An explicit width wins because the injected one
         // is prepended to this object.
         width: 240,
+        ariaLabel: `${COUNTRY_NAMES[code] || code}: median ${GRADE_LABELS[grade]} over time, ${unit}`,
         height: 190,
         marginLeft: 52,
         style: {background: "transparent", color: palette.text},
@@ -459,6 +555,7 @@ trendView = {
         .filter((row) => row.median != null);
       const figure = Plot.plot({
         width: chartWidth,
+        ariaLabel: `${COUNTRY_NAMES[trendCountry] || trendCountry}: median ${GRADE_LABELS[grade]} over time`,
         height: 400,
         style: {background: "transparent", color: palette.text},
         x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(rows)},
@@ -511,6 +608,7 @@ trendView = {
     if (!data.length) return html`<div class="cgp-notice">Pick at least one region.</div>`;
     const figure = Plot.plot({
       width: chartWidth,
+      ariaLabel: `${COUNTRY_NAMES[trendCountry] || trendCountry}: median ${GRADE_LABELS[grade]} by region`,
       height: 420,
       marginRight: 80,
       style: {background: "transparent", color: palette.text},

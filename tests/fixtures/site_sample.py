@@ -70,6 +70,22 @@ RELEASE_DL = "https://github.com/coatless-datasets/club-gas-prices/releases/down
 # fmt: off
 STATIONS = [
     {
+        "station_key": "US-SAMS-6376", "country": "US",
+        "brand": "SAMS", "name": "Addison Sam's Club", "name_local": None,
+        "address": "4062 Lbj Freeway", "postcode": "75244", "alt_id": "6376",
+        "city": "Dallas", "region": "TX", "lat": 32.921881, "lon": -96.843062,
+        "price_unit": "USD/gal", "currency": "USD",
+        "prices": [("UNLEAD", "regular", "3.699"), ("PREMIUM", "premium", "4.399")],
+    },
+    {
+        "station_key": "US-SAMS-8119", "country": "US",
+        "brand": "SAMS", "name": "Orlando Sam's Club", "name_local": None,
+        "address": "4600 Millenia Plaza Way", "postcode": "32839", "alt_id": "8119",
+        "city": "Orlando", "region": "FL", "lat": 28.4855, "lon": -81.4295,
+        "price_unit": "USD/gal", "currency": "USD",
+        "prices": [("UNLEAD", "regular", "3.799"), ("PREMIUM", "premium", "4.259")],
+    },
+    {
         "station_key": "US-COSTCO-1364", "country": "US",
         "brand": "COSTCO", "name": "Bradenton", "name_local": None,
         "address": "5311 CORTEZ RD W", "postcode": "34210", "alt_id": None,
@@ -157,27 +173,31 @@ STATIONS = [
 ]
 
 GRADE_TABLE = [
-    {"country": "US", "grade_raw": "regular", "grade": "regular", "priority": 1,
+    {"brand": "SAMS", "country": "US", "grade_raw": "UNLEAD", "grade": "regular", "priority": 1,
      "label": "Regular", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"country": "US", "grade_raw": "clear", "grade": "other", "priority": 1,
+    {"brand": "SAMS", "country": "US", "grade_raw": "PREMIUM", "grade": "premium", "priority": 1,
+     "label": "Premium", "spec": "", "spec_source": "", "spec_source_url": ""},
+    {"brand": "COSTCO", "country": "US", "grade_raw": "regular", "grade": "regular", "priority": 1,
+     "label": "Regular", "spec": "", "spec_source": "", "spec_source_url": ""},
+    {"brand": "COSTCO", "country": "US", "grade_raw": "clear", "grade": "other", "priority": 1,
      "label": "Clear diesel", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"country": "CA", "grade_raw": "regular", "grade": "regular", "priority": 1,
+    {"brand": "COSTCO", "country": "CA", "grade_raw": "regular", "grade": "regular", "priority": 1,
      "label": "Regular", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"country": "MX", "grade_raw": "Regular", "grade": "regular", "priority": 1,
+    {"brand": "COSTCO", "country": "MX", "grade_raw": "Regular", "grade": "regular", "priority": 1,
      "label": "Regular", "spec": "Octane index ([RON+MON]/2) at least 87",
      "spec_source": "reported", "spec_source_url": "https://api-reportediario.cne.gob.mx/"},
-    {"country": "GB", "grade_raw": "5301", "grade": "regular", "priority": 1,
+    {"brand": "COSTCO", "country": "GB", "grade_raw": "5301", "grade": "regular", "priority": 1,
      "label": "Unleaded Petrol", "spec": "E10", "spec_source": "source",
      "spec_source_url": "https://www.costco.co.uk/i18n/chunk/en_GB?basename=gas"},
-    {"country": "GB", "grade_raw": "5303", "grade": "diesel", "priority": 1,
+    {"brand": "COSTCO", "country": "GB", "grade_raw": "5303", "grade": "diesel", "priority": 1,
      "label": "Premium Diesel", "spec": "B7", "spec_source": "reported",
      "spec_source_url": "https://www.gov.uk/guidance/access-fuel-price-data"},
-    {"country": "AU", "grade_raw": "E10", "grade": "regular", "priority": 1,
+    {"brand": "COSTCO", "country": "AU", "grade_raw": "E10", "grade": "regular", "priority": 1,
      "label": "E10", "spec": "94 RON, 10% ethanol", "spec_source": "source",
      "spec_source_url": ""},
-    {"country": "JP", "grade_raw": "Kerosene", "grade": "other", "priority": 1,
+    {"brand": "COSTCO", "country": "JP", "grade_raw": "Kerosene", "grade": "other", "priority": 1,
      "label": "Kerosene", "spec": "Heating fuel", "spec_source": "", "spec_source_url": ""},
-    {"country": "TW", "grade_raw": "95", "grade": "regular", "priority": 1,
+    {"brand": "COSTCO", "country": "TW", "grade_raw": "95", "grade": "regular", "priority": 1,
      "label": "95", "spec": "95 RON", "spec_source": "source", "spec_source_url": ""},
 ]
 # fmt: on

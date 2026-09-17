@@ -130,7 +130,10 @@ nowTick = Generators.observe((notify) => {
 // sender was looking at: with storage, the same URL shows two people different
 // units and neither can tell.
 CONTROL_PARAMS = {
-  return {grade: "grade", currency: "cur", volume: "vol"};
+  // Every radio whose name appears here round-trips through the query string,
+  // so a link carries what the sender was looking at. The two page-local radios
+  // were already built by radioControl and only ever lacked an entry.
+  return {grade: "grade", currency: "cur", volume: "vol", colormode: "color", trendmode: "view"};
 }
 
 function controlFromUrl(name, fallback, allowed) {
@@ -654,6 +657,19 @@ function priceChanges(rows, limit = 30) {
   }
   out.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
   return out.slice(0, limit);
+}
+
+// The chain a country's solid line belongs to. Every country has Costco; only
+// the United States has a second, so the second is the one that gets dashed.
+PRIMARY_BRAND = "COSTCO"
+
+// A line's name. The country alone is enough where it has one chain, which is
+// everywhere but the United States; naming the chain only where it disambiguates
+// keeps six of seven countries reading the way they always did.
+function seriesLabel(country, brand) {
+  const name = COUNTRY_NAMES[country] || country;
+  if (!brand || brand === PRIMARY_BRAND) return name;
+  return `${name} · ${BRAND_NAMES[brand] || brand}`;
 }
 
 BRAND_NAMES = {

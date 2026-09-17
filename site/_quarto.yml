@@ -3,8 +3,10 @@ project:
   output-dir: ../_site
 
 website:
-  title: "Costco Gas Prices"
-  description: "Posted fuel prices at Costco gas stations in seven countries."
+  title: "Club Gas Prices"
+  description: "Posted fuel prices at warehouse-club gas stations."
+  site-url: "https://dashboard.thecoatlessprofessor.com/club-gas-prices"
+  open-graph: true
   navbar:
     left:
       - href: index.qmd

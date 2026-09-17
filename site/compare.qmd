@@ -127,6 +127,7 @@ compareView = {
     );
     return Plot.plot({
       width: chartWidth,
+      ariaLabel: `${axisLabel} by country`,
       height: 52 + rows.length * pitch,
       marginLeft: marginLeftUsed,
       marginRight: marginRightUsed,

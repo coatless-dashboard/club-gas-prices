@@ -322,7 +322,10 @@ def test_line_ends_are_labelled_per_series():
     # `z` must be explicit: with `stroke` a function Plot infers no series and
     # labels exactly one line.
     for block in text.split("Plot.selectLast({")[1:]:
-        assert 'z: "country"' in block.split("})")[0]
+        # Explicit, and the same key the line mark uses: two chains in one
+        # country are two lines, so a series keyed on country would label one
+        # and leave the other anonymous.
+        assert 'z: "series"' in block.split("})")[0]
 
 
 def test_dots_stand_down_once_they_stop_marking_anything():
