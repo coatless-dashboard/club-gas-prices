@@ -521,12 +521,28 @@ function showDots(pointsPerSeries, plotWidth = 790) {
 
 // Stations behind the latest day, from a column the query already selects and
 // nothing drew.
-function latestStationCount(rows) {
+//
+// Summed per chain, never across them. summary_daily is keyed on brand as well
+// as country, so once a second chain publishes in a country there are two rows
+// per day and a bare sum would quietly produce the pooled figure this site does
+// not make. `seriesOf` is the grouping every caller should use.
+function seriesOf(row) {
+  return row.brand ? `${row.country}-${row.brand}` : row.country;
+}
+
+function latestStationCount(rows, series) {
+  const scoped = series == null ? rows : rows.filter((row) => seriesOf(row) === series);
   let newest = "";
-  for (const row of rows) if (row.d > newest) newest = row.d;
-  return rows
-    .filter((row) => row.d === newest)
-    .reduce((total, row) => total + (row.n_stations || 0), 0);
+  for (const row of scoped) if (row.d > newest) newest = row.d;
+  const onNewest = scoped.filter((row) => row.d === newest);
+  // One row per series per day by construction. More than one means a caller
+  // handed in two chains, and the honest answer is the larger, not the sum.
+  const bySeries = new Map();
+  for (const row of onNewest) {
+    const key = seriesOf(row);
+    bySeries.set(key, (bySeries.get(key) || 0) + (row.n_stations || 0));
+  }
+  return Math.max(0, ...bySeries.values());
 }
 
 // What the chart covers, said once rather than hovered for.
@@ -550,7 +566,9 @@ function stationLinksEl(meta) {
     );
   }
   if (warehouse) {
-    links.push(html`<a href=${warehouse} target="_blank" rel="noopener">Costco store page</a>`);
+    links.push(
+      html`<a href=${warehouse} target="_blank" rel="noopener">${brandName(meta)} page</a>`
+    );
   }
   return html`<div class="cgp-notice cgp-station-links">${links}</div>`;
 }
@@ -623,16 +641,26 @@ function priceChanges(rows, limit = 30) {
   return out.slice(0, limit);
 }
 
+BRAND_NAMES = {
+  return {COSTCO: "Costco", SAMS: "Sam's Club"};
+}
+
+// The chain, by name. Falls back to the raw code so an unrecognised brand reads
+// oddly rather than reading as the wrong company.
+function brandName(meta) {
+  return (meta && BRAND_NAMES[meta.brand]) || (meta && meta.brand) || "The chain";
+}
+
 // What a station's status means, in words. A station is never removed from the
 // record once seen, so every one of these describes a station that is still
 // here with all of its history -- only its listing has changed.
 function statusSentence(meta) {
   if (!meta) return "";
   if (meta.status === "closed") {
-    return "Costco has not listed it for long enough that we call it closed; its history is kept.";
+    return `${brandName(meta)} has not listed it in long enough that we call it closed.`;
   }
   if (meta.status === "missing") {
-    return "Costco is not listing it right now. That is often a brief gap rather than a closure.";
+    return `${brandName(meta)} is not listing it right now — often a gap, not a closure.`;
   }
   return "Currently listed.";
 }
@@ -684,7 +712,12 @@ function hoverHtml(station) {
     .filter(([, price]) => price != null)
     .map(([label, price]) => `${label} <b>${fmtNumber(price, digits)}</b>`);
   const place = [station.city, station.region].filter((v) => v).join(", ");
-  const age = hoursAgo(station.captured_at_utc, nowTick);
+  // `new Date()`, not `nowTick`: reading the tick made this cell a dependent of
+  // a generator that fires every 60 s, so markerLayerUpdate re-ran, cleared the
+  // layer and rebuilt every marker on a timer -- closing whatever popup the
+  // reader had open. popupHtml has always read the clock directly for the same
+  // reason.
+  const age = hoursAgo(station.captured_at_utc, new Date());
   const parts = [
     `<div class="cgp-hover-name">${escapeHtml(station.name)}</div>`,
     `<div class="cgp-hover-place"><span class="cgp-flag">${countryFlag(
@@ -780,6 +813,7 @@ function applyZoomStyling(el) {
 compareRows = db
   ? db.query(`
       SELECT country,
+             brand,
              strftime(capture_date, '%Y-%m-%d') AS d,
              n_stations,
              n_stations_usd,
@@ -791,7 +825,7 @@ compareRows = db
              p75_usd_per_litre
       FROM summary_daily
       WHERE level = 'country' AND grade = ${sqlText(grade)}
-      ORDER BY country, capture_date
+      ORDER BY country, brand, capture_date
     `)
   : []
 
@@ -863,6 +897,7 @@ function compareTableEl() {
 trendCountryRows = db
   ? db.query(`
       SELECT country,
+             brand,
              strftime(capture_date, '%Y-%m-%d') AS d,
              n_stations,
              median_local_per_litre,
@@ -873,7 +908,7 @@ trendCountryRows = db
              p75_usd_per_litre
       FROM summary_daily
       WHERE level = 'country' AND grade = ${sqlText(grade)}
-      ORDER BY country, capture_date
+      ORDER BY country, brand, capture_date
     `)
   : []
 ```

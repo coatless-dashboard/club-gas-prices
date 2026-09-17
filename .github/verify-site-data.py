@@ -55,6 +55,15 @@ def main(argv: list[str]) -> int:
     for name, asset in SITE_ASSETS.items():
         (root / asset).replace(root / name)
     manifest_path.unlink()
+
+    # Anything left is not one of the five. The download pattern is narrow, but
+    # the collector's release also holds `<name>.next-<token>` and
+    # `<name>.old-<token>` mid-write temporaries, and this directory is copied
+    # wholesale into the published site -- so a stray here reaches Pages.
+    for stray in sorted(p for p in root.iterdir() if p.name not in SITE_ASSETS):
+        print(f"removing stray {stray.name}", file=sys.stderr)
+        stray.unlink()
+
     print(f"verified {len(SITE_ASSETS)} site assets against manifest.json")
     return 0
 

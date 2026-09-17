@@ -6,8 +6,11 @@ on:
   # Reading a public repository's releases needs no token of its own, which is
   # the whole reason to poll instead of holding a PAT here.
   # Uncomment once the collector has published a `current` release.
+  # Capture runs at :17 every six hours. This sits 33 minutes later so a render
+  # never lands while `current` is being rewritten asset by asset, at the same
+  # ~90 minute average freshness a :20 offset would give.
   # schedule:
-  #   - cron: "20 */3 * * *"
+  #   - cron: "50 */3 * * *"
   push:
     branches: [main]
     paths:
@@ -60,7 +63,8 @@ jobs:
             mkdir -p site/data
             ok=1
             gh release download current --repo "$DATA_REPO" --dir site/data --clobber \
-              --pattern manifest.json --pattern 'site-*' || ok=0
+              --pattern manifest.json \
+              --pattern 'site-*.json' --pattern 'site-*.parquet' || ok=0
             if [ "$ok" = 1 ] && python3 .github/verify-site-data.py site/data; then
               echo "has_data=true" >> "$GITHUB_OUTPUT"
               exit 0

@@ -143,7 +143,9 @@ markerLayerUpdate = {
     });
     marker._cgpFraction = fraction;
     marker.bindPopup(() => popupHtml(station, volume), {maxWidth: 340, autoPan: true});
-    marker.bindTooltip(hoverHtml(station), {
+    // Lazy, like the popup above it: the string is built when the reader
+    // actually hovers, not once per marker on every rebuild.
+    marker.bindTooltip(() => hoverHtml(station), {
       direction: "top",
       offset: [0, -4],
       className: "cgp-hover-tip"

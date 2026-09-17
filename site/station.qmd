@@ -271,19 +271,23 @@ stationChanges = {
       ${selectedMeta.name}. Its prices have held for every day collected so far.</div>`;
   }
   const rows = changes.map((change) => {
-    const delta = change.to - change.from;
-    const pct = change.from > 0 ? (delta / change.from) * 100 : null;
+    // Pick the currency FIRST, then derive the change from that same pair.
+    // Reading delta from the local pair while printing the USD pair made the
+    // percentage contradict the numbers beside it whenever the rate moved, and
+    // could point the arrow the wrong way.
     const unit = currency === "USD" ? "USD" : change.currency;
     const from = currency === "USD" ? change.fromUsd : change.from;
     const to = currency === "USD" ? change.toUsd : change.to;
+    const delta = from == null || to == null ? null : to - from;
+    const pct = delta != null && from > 0 ? (delta / from) * 100 : null;
     return html`<tr>
       <td>${change.d}</td>
       <td>${GRADE_LABELS[change.grade] || change.grade}</td>
       <td class="cgp-num">${fmtNumber(perVolume(from, volume), priceDigits)}</td>
       <td class="cgp-num">${fmtNumber(perVolume(to, volume), priceDigits)} ${unit}${volumeShort}</td>
-      <td class=${"cgp-num " + (delta > 0 ? "cgp-up" : "cgp-down")}>${
-        delta > 0 ? "▲" : "▼"
-      } ${pct == null ? "—" : fmtPct(pct)}</td>
+      <td class=${"cgp-num " + (delta == null ? "" : delta > 0 ? "cgp-up" : "cgp-down")}>${
+        delta == null ? "—" : delta > 0 ? "▲" : "▼"
+      } ${pct == null ? "" : fmtPct(pct)}</td>
     </tr>`;
   });
   return html`<div>

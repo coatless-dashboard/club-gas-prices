@@ -73,7 +73,11 @@ def test_render_only_reads_the_data_repository():
 
 def test_render_fetches_the_site_assets_by_prefix():
     text = read()
-    assert "--pattern manifest.json --pattern 'site-*'" in text
+    # Narrow patterns: a bare 'site-*' also matches the collector's reserved
+    # `<name>.next-<token>` and `.old-<token>` mid-write temporaries, and this
+    # directory is copied wholesale into the published site.
+    assert "--pattern 'site-*.json' --pattern 'site-*.parquet'" in text
+    assert "--pattern 'site-*'" not in text
     assert "python3 .github/verify-site-data.py site/data" in text
     # `.next-*` and `.old-*` are mid-write names on the data repository's
     # release that only its own reader may see.
@@ -181,3 +185,31 @@ def test_verify_rejects_a_release_that_predates_the_site_assets(tmp_path):
     done = run_verify(tmp_path)
     assert done.returncode != 0
     assert "no entry for site-meta.json" in done.stderr
+
+
+def test_verify_removes_a_stray_that_would_otherwise_reach_pages():
+    """`current` holds mid-write temporaries. Staging copies this directory
+    wholesale, so anything left behind is published."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "data"
+        root.mkdir()
+        write_release(root)
+        stray = root / "site-history.parquet.old-abc123"
+        stray.write_bytes(b"a stale multi-megabyte parquet")
+
+        done = subprocess.run(
+            [sys.executable, str(VERIFY), str(root)], capture_output=True, text=True, check=False
+        )
+
+        assert done.returncode == 0, done.stderr
+        assert "removing stray" in done.stderr
+        assert {p.name for p in root.iterdir()} == set(SITE_ASSETS)
+
+
+def test_the_render_cron_does_not_land_inside_a_publish():
+    """Capture runs at :17 every six hours and rewrites `current` asset by asset."""
+    text = read()
+    assert '# - cron: "20 */3 * * *"' not in text.replace("  #", "#")
+    assert '"50 */3 * * *"' in text

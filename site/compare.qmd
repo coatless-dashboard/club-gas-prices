@@ -114,11 +114,22 @@ compareView = {
       // Last, so it paints over the value labels rather than under them.
       Plot.tip(rows, Plot.pointer({y: "label", x: "value", ...tipStyle(), title: tipTitle}))
     );
+    // The callers ask for up to 260px of label gutter, which is right on a wide
+    // screen and impossible on a phone: at 390px chartWidth is 342, so a 260/110
+    // pair leaves an x range of [260, 232] -- negative. Every dot then lands on
+    // the same cx and the chart asserts that every country moved identically,
+    // while the text labels print the real, differing values. Keep at least
+    // 140px of plot area, whatever was asked for.
+    const marginRightUsed = chartWidth < 500 ? 56 : 110;
+    const marginLeftUsed = Math.min(
+      marginLeft,
+      Math.max(80, chartWidth - marginRightUsed - 140)
+    );
     return Plot.plot({
       width: chartWidth,
       height: 52 + rows.length * pitch,
-      marginLeft,
-      marginRight: 110,
+      marginLeft: marginLeftUsed,
+      marginRight: marginRightUsed,
       style: {background: "transparent", color: palette.text},
       x: {label: axisLabel, grid: true, nice: true},
       y: {domain: rows.map((row) => row.label), label: null},

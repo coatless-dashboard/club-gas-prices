@@ -386,7 +386,11 @@ def test_the_site_explains_what_a_station_status_means():
     assert 'meta.status === "closed"' in text
     assert 'meta.status === "missing"' in text
     # Not listed right now is not the same claim as closed.
-    assert "often a brief gap rather than a closure" in text
+    assert "often a gap, not a closure" in text
+    # The sentence names the chain that stopped listing it, because with two
+    # chains in the data "Costco is not listing it" is wrong half the time.
+    assert "brandName(meta)" in text
+    assert "Costco has not listed" not in text
 
 
 def test_the_map_styling_follows_quartos_own_theme_switch():
@@ -408,8 +412,12 @@ def test_the_notice_and_a_route_for_rights_holders_are_in_the_footer():
     footer = (SITE / "_footer.qmd").read_text(encoding="utf-8")
     # One source of truth: the notice comes from config through meta.json.
     assert "meta.notice" in footer
-    assert "Costco Wholesale Corporation" in footer
-    assert "taken down" in footer
+    # Brand-neutral: the notice above it already names every chain, and this
+    # route has to work for whichever one is writing in.
+    assert "Costco Wholesale Corporation" not in footer
+    assert "one of these chains" in footer
+    # A takedown is offered, in whatever words.
+    assert "removed" in footer
     for name in PAGES:
         assert "{{< include _footer.qmd >}}" in (SITE / name).read_text(encoding="utf-8"), name
 
@@ -420,3 +428,26 @@ def test_a_daily_series_gets_daily_ticks():
     text = read_qmd()
     assert "function dayTicks(rows)" in text
     assert text.count("ticks: dayTicks(") >= 5
+
+
+def test_summary_queries_carry_brand_so_two_chains_cannot_pool():
+    """summary_daily is keyed on brand as well as country.
+
+    Once a second chain publishes in a country there are two rows per day, so a
+    query that neither selects nor groups by brand silently draws both as one
+    series and sums their station counts -- the pooled figure this site does not
+    make. Nothing else on the page reveals it, which is why it is pinned here.
+    """
+    shared = (ROOT / "site" / "_shared.qmd").read_text(encoding="utf-8")
+
+    country_queries = shared.count("WHERE level = 'country'")
+    assert country_queries >= 2, "expected the country-level summary queries"
+    assert shared.count("ORDER BY country, brand, capture_date") == country_queries
+
+    # brand is projected, so a consumer can tell the chains apart.
+    assert shared.count("             brand,\n") == country_queries
+
+    # And the station count is per chain, not a bare sum across rows.
+    assert "function seriesOf(row)" in shared
+    assert "function latestStationCount(rows, series)" in shared
+    assert ".reduce((total, row) => total + (row.n_stations || 0), 0)" not in shared
