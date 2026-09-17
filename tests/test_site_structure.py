@@ -188,3 +188,57 @@ def test_a_station_carries_its_country_flag():
     # rather than shipped as an image per country.
     assert "0x1f1e6" in text
     assert text.count('class="cgp-flag"') >= 2
+
+
+def test_the_trend_view_control_is_built_once():
+    """A control that depends on the breakdown or the currency resets on every
+    change of either, throwing away the reader's choice."""
+    text = read_qmd()
+    block = text.split("viewof trendMode = radioControl(", 1)[1].split(")\n```", 1)[0]
+    for reactive in ("trendCountry", "currency", "grade", "volume"):
+        assert reactive not in block, f"trendMode depends on {reactive}"
+    assert '"price"' in block and '"change"' in block and '"separate"' in block
+
+
+def test_a_shared_price_axis_needs_a_single_currency():
+    """The incommensurability is between countries, not inside one: a country's
+    regions all price in the same currency, so they keep a real price axis."""
+    text = read_qmd()
+    assert 'mixedCurrency = currency === "Local" && trendCountry === "All countries"' in text
+    assert (
+        'effectiveTrendMode = mixedCurrency && trendMode === "price" ? "change" : trendMode' in text
+    )
+    # Both labels exist, and the local one says the change was measured in each
+    # country's own money -- without that clause the axis is ambiguous.
+    assert "each country in its own currency (%)" in text
+    assert "since ${baseText}, in USD (%)" in text
+
+
+def test_the_change_view_anchors_every_country_on_one_day():
+    """Anchoring each line on its own first day and printing one date on the
+    axis is the claim this view exists to avoid."""
+    text = read_qmd()
+    assert "function commonBaseDay(" in text
+    assert "Math.max(...firsts)" in text
+    assert "its own first day" in text
+
+
+def test_compare_draws_a_chart_in_every_scope():
+    """Local currency used to fall back to a table, so the chart disappeared
+    whenever the reader asked for local prices."""
+    text = read_qmd()
+    compare = text.split("compareView = {", 1)[1]
+    assert 'if (currency === "Local") return compareTableEl();' not in compare
+    # Four scopes: country/region across USD/local, all through one mark set.
+    assert "function dotPlot(rows, {" in compare
+    assert compare.count("dotPlot(") >= 4
+    # A country's regions share its currency, so they keep real prices.
+    assert "One country \nprices in one currency" in compare or (
+        "prices in one currency, so these are real prices" in compare
+    )
+
+
+def test_compare_keeps_the_table_helper_as_a_fallback():
+    """compareTableEl is no longer reached, but it is the right answer if the
+    local chart is ever cut, and it costs nothing to keep."""
+    assert "function compareTableEl()" in read_qmd()

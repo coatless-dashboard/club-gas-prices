@@ -83,11 +83,24 @@ $navbar-fg: #f4f7f8 !default;
   border-radius: 2px;
 }
 
-// A chart card holds its content at the top; centered, a short chart floats in
-// the middle of the card with its key stranded above it.
+// An option that cannot apply right now: still readable, visibly not available,
+// and it keeps its place so the row does not reflow.
+.cgp-field > div > label.cgp-option-off {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+// A chart card holds its content at the top. Quarto wraps each chunk's hidden
+// source in a scaffold it marks `flex: 1 1 auto`, so the scaffold grows to a
+// share of the card and pushes the chart down the page -- 137px of nothing
+// above the Trends chart before this.
 .cgp-chart-card .cell-output-display,
 .cgp-chart-card .html-fill-item {
   justify-content: flex-start;
+}
+
+.cgp-chart-card .code-copy-outer-scaffold {
+  flex: 0 0 auto;
 }
 
 // The key for a dot mark, rather than for a band.
