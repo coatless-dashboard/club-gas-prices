@@ -269,3 +269,19 @@ def test_dots_stand_down_once_they_stop_marking_anything():
     text = read_qmd()
     assert "function showDots(" in text
     assert "showDots(days.length)" in text
+
+
+def test_the_sample_uses_keys_the_pipeline_would_emit():
+    """A sample key the collector could never produce ends up in a URL somebody
+    shares. MX and TW are keyed on the warehouse number, not the branch name."""
+    import json as _json
+
+    sample = (ROOT / "tests" / "fixtures" / "site_sample.py").read_text()
+    for wrong in ('"MX-Mexicali"', '"TW-Chungli"'):
+        assert wrong not in sample, wrong
+    data = ROOT / "site" / "data" / "stations.json"
+    if data.exists():
+        for row in _json.loads(data.read_text()):
+            country, _, rest = row["station_key"].partition("-")
+            if country in ("MX", "TW", "AU"):
+                assert rest.isdigit(), f"{row['station_key']} is not a warehouse number"

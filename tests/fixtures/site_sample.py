@@ -75,7 +75,7 @@ STATIONS = [
                    ("diesel", "diesel", "2.649")],
     },
     {
-        "station_key": "MX-Mexicali", "country": "MX", "name": "Mexicali", "name_local": None,
+        "station_key": "MX-750", "country": "MX", "name": "Mexicali", "name_local": None,
         "city": "Mexicali", "region": "BCN", "lat": 32.60663671, "lon": -115.4343584,
         "price_unit": "MXN/L", "currency": "MXN",
         "prices": [("Regular", "regular", "$20.89"), ("Premium", "premium", "$25.39")],
@@ -102,7 +102,7 @@ STATIONS = [
                    ("Diesel", "diesel", "¥135"), ("Kerosene", "other", "¥124")],
     },
     {
-        "station_key": "TW-Chungli", "country": "TW", "name": "Chungli",
+        "station_key": "TW-010", "country": "TW", "name": "Chungli",
         "name_local": "桃園中壢店", "city": None, "region": "桃園市",
         "lat": 24.9636189, "lon": 121.1558083,
         "price_unit": "TWD/L", "currency": "TWD",
