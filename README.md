@@ -10,9 +10,13 @@ This repository holds the site only. The prices are collected and published by
 and that is where the dataset, its schema and its release history live.
 
 > [!IMPORTANT]
-> Unofficial. Not affiliated with, endorsed by, or connected to Costco Wholesale
-> Corporation. Prices are collected from Costco's public websites and may differ from
-> the price at the pump.
+> Unofficial. Prices are collected from public websites and may differ from the price at
+> the pump.
+>
+> Not affiliated with, endorsed by, or connected to Costco Wholesale Corporation.
+>
+> Not affiliated with, endorsed by, or connected to Sam's West, Inc., Sam's Club, or
+> Walmart Inc.
 
 ## The pages
 

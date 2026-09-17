@@ -1,15 +1,16 @@
 ::: {.cgp-footer}
 
 ```{ojs}
-// The notice comes from config/site.toml through meta.json, so this is the one
-// that is already shipped in the release bodies and the README rather than a
-// fifth copy that can drift from them.
+// The notice comes from config/site.toml through meta.json: a shared prefix
+// followed by one clause per chain actually present in the capture, so a reader
+// is never disclaimed at about a chain this page cannot show them.
 siteFooter = {
   const repo = (meta.releases && meta.releases.all
     ? meta.releases.all.replace(/\/releases.*$/, "")
     : "https://github.com/coatless-datasets/club-gas-prices");
   return html`<div>
-    <p class="cgp-footer-notice">${meta.notice}</p>
+    ${(Array.isArray(meta.notice) ? meta.notice : [meta.notice])
+      .map((line) => html`<p class="cgp-footer-notice">${line}</p>`)}
     <p class="cgp-footer-notice">If you represent Costco Wholesale Corporation and would like
       anything here changed, corrected or taken down, please
       <a href=${repo + "/issues/new"}>open an issue</a> or write to the address in the
