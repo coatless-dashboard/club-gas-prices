@@ -13,6 +13,8 @@ website:
         text: Compare
       - href: trends.qmd
         text: Trends
+      - href: changes.qmd
+        text: Changes
       - href: station.qmd
         text: Station
       - href: about.qmd

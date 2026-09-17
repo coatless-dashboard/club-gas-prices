@@ -13,7 +13,7 @@ DARK = SITE / "dark.scss"
 CONFIG = SITE / "_quarto.yml"
 
 # One page per view, plus the two includes every page pulls in.
-PAGES = ("index.qmd", "compare.qmd", "trends.qmd", "station.qmd", "about.qmd")
+PAGES = ("index.qmd", "compare.qmd", "trends.qmd", "changes.qmd", "station.qmd", "about.qmd")
 INCLUDES = ("_shared.qmd", "_controls.qmd")
 
 
@@ -91,6 +91,7 @@ def test_only_the_pages_that_query_load_duckdb():
         "index.qmd": False,
         "compare.qmd": True,
         "trends.qmd": True,
+        "changes.qmd": True,
         "station.qmd": True,
         "about.qmd": False,
     }
@@ -146,9 +147,19 @@ def test_the_controls_travel_with_a_link():
     assert "localStorage" not in text
 
 
-def test_station_history_is_always_filtered_by_station_key():
+def test_every_history_query_is_bounded():
+    """history.parquet grows without bound, so nothing may scan all of it.
+
+    Two shapes are allowed. A station-scoped query names its keys, which prunes
+    row groups because station_key leads the file's sort order. A place-scoped
+    query does not, so it must at least carry a date window. A query with
+    neither would read the whole file into the browser.
+    """
     for match in re.finditer(r"FROM history\b(.*?)`", read_qmd(), re.S):
-        assert "WHERE station_key IN (" in match.group(1)
+        body = match.group(1)
+        station_scoped = "WHERE station_key IN (" in body
+        windowed = "capture_date > (SELECT max(capture_date) FROM history)" in body
+        assert station_scoped or windowed, body[:200]
 
 
 def ojs_chunks() -> list[str]:

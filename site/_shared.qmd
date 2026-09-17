@@ -103,7 +103,15 @@ palette = {
 db = pageWantsDb
   ? DuckDBClient.of({
       summary_daily: FileAttachment("data/summary_daily.parquet"),
-      history: FileAttachment("data/history.parquet")
+      history: FileAttachment("data/history.parquet"),
+      // The array already fetched for the map, projected to the three columns
+      // SQL needs. Registering the FileAttachment instead would download
+      // stations.json a second time.
+      stations: stationsAll.map((s) => ({
+        station_key: s.station_key,
+        country: s.country,
+        region: s.region
+      }))
     })
   : null
 
@@ -505,6 +513,13 @@ function pctFrom(value, base) {
 function fmtPct(value) {
   if (value == null || !isFinite(value)) return "—";
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+// A share, not a change. fmtPct signs its output because it reads a movement
+// against a baseline; "+18% of readings moved" says something else entirely.
+function fmtShare(value) {
+  if (value == null || !isFinite(value)) return "—";
+  return `${value.toFixed(1)}%`;
 }
 
 // tableau10, the only ordinal scheme Plot 0.6.11 ships that suits this, has ten

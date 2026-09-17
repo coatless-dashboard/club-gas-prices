@@ -217,6 +217,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
             for key in (
                 "station_key",
                 "country",
+                "brand",
                 "name",
                 "name_local",
                 "address",

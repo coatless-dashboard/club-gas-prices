@@ -92,5 +92,12 @@ def test_only_errors_from_the_site_origin_count():
 
 
 def test_the_five_pages_and_the_library_hosts_are_the_spec_ones():
-    assert PAGES == ["index.html", "compare.html", "trends.html", "station.html", "about.html"]
+    assert PAGES == [
+        "index.html",
+        "compare.html",
+        "trends.html",
+        "changes.html",
+        "station.html",
+        "about.html",
+    ]
     assert LIBRARY_HOSTS == ("cdn.jsdelivr.net", "cdn.observableusercontent.com")
