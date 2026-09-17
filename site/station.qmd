@@ -111,7 +111,7 @@ stationChart = {
       domain: ["regular", "premium", "diesel"],
       range: [palette.ramp[0], palette.ramp[3], palette.ramp[2]]
     },
-    x: {label: "Capture date (UTC)", grid: true},
+    x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(own.concat(medians))},
     y: {label: `${unit} ${volumeLabel}`, grid: true, nice: true},
     marks: [
       Plot.line(neighbours, {
@@ -299,3 +299,5 @@ stationChanges = {
 ```
 
 :::
+
+{{< include _footer.qmd >}}

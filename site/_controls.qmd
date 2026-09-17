@@ -60,8 +60,4 @@ freshnessNotice = {
 }
 ```
 
-```{ojs}
-html`<div class="cgp-notice cgp-sidebar-section">${meta.notice}</div>`
-```
-
 :::

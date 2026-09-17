@@ -1,0 +1,21 @@
+::: {.cgp-footer}
+
+```{ojs}
+// The notice comes from config/site.toml through meta.json, so this is the one
+// that is already shipped in the release bodies and the README rather than a
+// fifth copy that can drift from them.
+siteFooter = {
+  const repo = (meta.releases && meta.releases.all
+    ? meta.releases.all.replace(/\/releases.*$/, "")
+    : "https://github.com/coatless-dashboard/costco-gas-prices");
+  return html`<div>
+    <p class="cgp-footer-notice">${meta.notice}</p>
+    <p class="cgp-footer-notice">If you represent Costco Wholesale Corporation and would like
+      anything here changed, corrected or taken down, please
+      <a href=${repo + "/issues/new"}>open an issue</a> or write to the address in the
+      <a href=${repo + "/blob/main/README.md"}>repository</a>. We will respond.</p>
+  </div>`;
+}
+```
+
+:::

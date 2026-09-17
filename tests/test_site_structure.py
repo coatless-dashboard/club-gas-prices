@@ -372,3 +372,36 @@ def test_the_site_explains_what_a_station_status_means():
     assert 'meta.status === "missing"' in text
     # Not listed right now is not the same claim as closed.
     assert "often a brief gap rather than a closure" in text
+
+
+def test_the_map_styling_follows_quartos_own_theme_switch():
+    """Leaflet ships light styling and is fetched at runtime, so its stylesheet
+    lands after the theme's and wins on order at equal specificity. The extra
+    class is what beats it, and Bootstrap's own variables are what the light and
+    dark switch actually changes."""
+    css = CUSTOM.read_text(encoding="utf-8")
+    assert ".leaflet-tooltip.cgp-hover-tip {" in css
+    assert ".leaflet-popup .leaflet-popup-content-wrapper," in css
+    for rule in ("--bs-body-bg", "--bs-body-color", "--bs-border-color"):
+        assert rule in css
+    # The dark theme must not restate what the shared rules already key on.
+    dark = DARK.read_text(encoding="utf-8")
+    assert ".leaflet-popup-content-wrapper" not in dark
+
+
+def test_the_notice_and_a_route_for_rights_holders_are_in_the_footer():
+    footer = (SITE / "_footer.qmd").read_text(encoding="utf-8")
+    # One source of truth: the notice comes from config through meta.json.
+    assert "meta.notice" in footer
+    assert "Costco Wholesale Corporation" in footer
+    assert "taken down" in footer
+    for name in PAGES:
+        assert "{{< include _footer.qmd >}}" in (SITE / name).read_text(encoding="utf-8"), name
+
+
+def test_a_daily_series_gets_daily_ticks():
+    """Given room, Plot subdivides a daily series into hours -- and the wider the
+    page, the more of them."""
+    text = read_qmd()
+    assert "function dayTicks(rows)" in text
+    assert text.count("ticks: dayTicks(") >= 5

@@ -130,3 +130,5 @@ Code is MIT licensed. The data files carry no license claim and include the
 notice above.
 
 :::
+
+{{< include _footer.qmd >}}

@@ -21,7 +21,7 @@ $navbar-fg: #e6e9ec !default;
   --cgp-marker-stroke: #14171a;
   --cgp-grid: rgba(230, 233, 236, 0.18);
   --cgp-muted: #9aa4ad;
-  --cgp-control-bg: #1b2024;
+  --cgp-control-bg: var(--bs-body-bg, #1b2024);
   --cgp-control-border: rgba(230, 233, 236, 0.22);
   --cgp-control-hover: rgba(108, 182, 217, 0.14);
   --cgp-control-active: #6cb6d9;
@@ -35,24 +35,10 @@ $navbar-fg: #e6e9ec !default;
   filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.7);
 }
 
-.leaflet-container {
-  background: #1b1f24;
-}
-
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: #1b1f24;
-  color: #e6e9ec;
-}
-
-.leaflet-control-attribution {
-  background: rgba(20, 23, 26, 0.8) !important;
-  color: #9aa4ad !important;
-}
-
-.leaflet-control-attribution a {
-  color: #7fc2d8 !important;
-}
+// The popup, tooltip, attribution and container colors live in custom.scss
+// now, keyed on Bootstrap's variables, so they follow the theme switch without
+// a second set of values to keep in step. Only the tile filter is genuinely
+// dark-specific.
 
 .cgp-results button:hover,
 .cgp-results button:focus-visible {

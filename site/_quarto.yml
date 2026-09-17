@@ -31,7 +31,7 @@ format:
       light: [default, custom.scss]
       dark: [default, custom.scss, dark.scss]
     respect-user-color-scheme: true
-    page-layout: full
+    page-layout: custom
     toc: false
     css: []
 

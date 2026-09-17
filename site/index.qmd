@@ -269,3 +269,5 @@ mapEl = {
 ```
 
 :::
+
+{{< include _footer.qmd >}}

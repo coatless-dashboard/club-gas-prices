@@ -142,10 +142,27 @@ function withControls(href) {
   return url.pathname.split("/").pop() + url.search + url.hash;
 }
 
+// One tick per day. Given room, Plot subdivides a daily series into hours --
+// "12 AM Sep 2, 12 PM, 12 AM Sep 3" for data that only ever has one value a
+// day -- and the wider the page, the more of them. Capped so a long history
+// thins out instead of crowding.
+function dayTicks(rows) {
+  const days = new Set(
+    (rows || []).map((row) => {
+      // Callers pass whatever they already have: a row, a Date, or the
+      // timestamps a chart already reduced its days to.
+      if (typeof row === "number") return row;
+      const d = row instanceof Date ? row : row && row.day;
+      return d instanceof Date ? d.getTime() : d;
+    })
+  );
+  return Math.max(2, Math.min(days.size || 2, 14));
+}
+
 // A dashboard rewrote every Plot.plot call to inject the card's width. A site
 // does not, and a chart that says nothing falls to Plot's 640px default and
 // stops being responsive. `width` is the OJS builtin that tracks the page.
-chartWidth = Math.max(320, Math.min(width - 32, 1180))
+chartWidth = Math.max(320, Math.min(width - 48, 1600))
 
 function radioControl(name, entries, value, label) {
   const keys = entries.map((entry) => entry[1]);

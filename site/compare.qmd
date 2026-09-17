@@ -303,3 +303,5 @@ compareNotes = {
 ```
 
 :::
+
+{{< include _footer.qmd >}}

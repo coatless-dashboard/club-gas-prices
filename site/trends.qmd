@@ -214,7 +214,7 @@ trendView = {
       height: 420,
       marginRight: 60,
       style: {background: "transparent", color: palette.text},
-      x: {label: "Capture date (UTC)", grid: true},
+      x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(days)},
       y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
       marks
     });
@@ -351,7 +351,7 @@ trendView = {
       height: 400,
       marginRight: 60,
       style: {background: "transparent", color: palette.text},
-      x: {label: "Capture date (UTC)", grid: true},
+      x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(days)},
       y: {label, grid: true, nice: true, tickFormat: fmtPct},
       marks
     });
@@ -452,7 +452,7 @@ trendView = {
         width: chartWidth,
         height: 400,
         style: {background: "transparent", color: palette.text},
-        x: {label: "Capture date (UTC)", grid: true},
+        x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(rows)},
         y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
         marks: [
           Plot.line(rows, {
@@ -508,7 +508,7 @@ trendView = {
       // Quarto's OJS stdlib pins Plot 0.6.11, which has no `observable10`
       // ordinal scheme: naming it throws and turns the whole cell into an error.
       color: {legend: true, scheme: "tableau10"},
-      x: {label: "Capture date (UTC)", grid: true},
+      x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(data)},
       y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
       marks: [
         Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
@@ -543,3 +543,5 @@ trendView = {
 ```
 
 :::
+
+{{< include _footer.qmd >}}

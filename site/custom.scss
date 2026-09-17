@@ -25,8 +25,8 @@ $navbar-fg: #f4f7f8 !default;
   --cgp-marker-stroke: #ffffff;
   --cgp-grid: rgba(27, 31, 35, 0.12);
   --cgp-muted: #5b6770;
-  --cgp-control-bg: #ffffff;
-  --cgp-control-border: rgba(27, 31, 35, 0.18);
+  --cgp-control-bg: var(--bs-body-bg, #ffffff);
+  --cgp-control-border: var(--bs-border-color, rgba(27, 31, 35, 0.18));
   --cgp-control-hover: rgba(31, 111, 139, 0.08);
   --cgp-control-active: #1f6f8b;
   --cgp-control-active-fg: #ffffff;
@@ -88,6 +88,37 @@ $navbar-fg: #f4f7f8 !default;
 .cgp-field > div > label.cgp-option-off {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+// page-layout: custom hands the whole width over and drops the grid's gutters
+// with it, so the page supplies its own. This is the "full area" the article
+// layout calls screen: content spans the viewport, with a gutter wide enough
+// that nothing is flush against the edge.
+#quarto-content.page-layout-custom {
+  max-width: none;
+  padding: 1.25rem 1.75rem 0;
+}
+
+// Prose stays at a readable measure even where the page does not; a paragraph
+// 1800px wide is not readable at any font size.
+.cgp-footer-notice,
+main.content > p {
+  max-width: 62rem;
+}
+
+// The notice sits at the foot of every page rather than beside the controls:
+// it is a standing statement about the whole site, not a caption on one view.
+.cgp-footer {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--bs-border-color);
+}
+
+.cgp-footer-notice {
+  font-size: 0.8rem;
+  color: var(--cgp-muted);
+  margin-bottom: 0.4rem;
+  max-width: 62rem;
 }
 
 // The key for a dot mark, rather than for a band.
@@ -535,18 +566,51 @@ h2 {
 }
 
 // What hovering a station shows.
-.cgp-hover-tip {
-  background: var(--cgp-control-bg);
-  border: 1px solid var(--cgp-control-border);
+// Leaflet brings its own light styling and is fetched at runtime, so its
+// stylesheet lands after the theme's and wins on order at equal specificity.
+// The extra class is what beats it. These read Bootstrap's own variables --
+// the ones Quarto's light/dark switch actually changes -- rather than a
+// parallel set of tokens that has to be kept in step with it.
+.leaflet-tooltip.cgp-hover-tip {
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
   border-radius: 6px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
-  color: inherit;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  color: var(--bs-body-color);
   padding: 0.4rem 0.55rem;
   white-space: nowrap;
 }
 
-.cgp-hover-tip::before {
-  border-top-color: var(--cgp-control-border);
+.leaflet-tooltip.cgp-hover-tip::before {
+  border-top-color: var(--bs-border-color);
+}
+
+.leaflet-popup .leaflet-popup-content-wrapper,
+.leaflet-popup .leaflet-popup-tip {
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+}
+
+.leaflet-popup .leaflet-popup-content-wrapper {
+  border: 1px solid var(--bs-border-color);
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--bs-secondary-color, var(--bs-body-color));
+}
+
+// Same story for the plugin's cluster badge and the map's own backdrop.
+.leaflet-container {
+  background: var(--bs-secondary-bg, var(--bs-body-bg));
+}
+
+.leaflet-control-attribution {
+  background: var(--bs-body-bg) !important;
+  color: var(--bs-secondary-color, var(--bs-body-color)) !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--bs-link-color) !important;
 }
 
 .cgp-hover-name {
