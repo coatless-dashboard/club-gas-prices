@@ -77,7 +77,7 @@ def test_range_gets_206_and_content_range(base_url: str):
 
 
 def test_head_with_range_gets_206(base_url: str):
-    # This is the exact behaviour the server exists for: DuckDB-WASM only opens a
+    # This is the exact behavior the server exists for: DuckDB-WASM only opens a
     # Parquet file over HTTP when a ranged HEAD returns 206. `python -m
     # http.server` answers every HEAD with a plain 200 and no Content-Range,
     # which sends DuckDB-WASM down the whole-file fallback path.

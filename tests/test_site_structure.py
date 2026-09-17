@@ -156,3 +156,35 @@ def test_the_map_groups_stations_and_stops_at_a_stated_zoom():
     assert "disableClusteringAtZoom: LABEL_ZOOM" in text
     # Falls back to a plain layer group rather than losing the map entirely.
     assert "L.layerGroup()" in text
+
+
+def test_the_page_is_written_in_american_english():
+    """One spelling across the dashboard, the README and the code comments."""
+    british = re.compile(
+        r"\b(colour\w*|dearer|dearest|grey|licence|behaviour\w*|centre|organis\w+)\b",
+        re.IGNORECASE,
+    )
+    for path in (
+        QMD,
+        ROOT / "site" / "custom.scss",
+        ROOT / "site" / "dark.scss",
+        ROOT / "README.md",
+    ):
+        found = british.findall(path.read_text(encoding="utf-8"))
+        assert not found, f"{path.name}: {sorted(set(found))}"
+
+
+def test_the_legend_says_what_the_ramp_means():
+    """ "Cheaper/Dearer" left a reader guessing which end was which."""
+    text = read_qmd()
+    assert "Lower price" in text and "Higher price" in text
+    assert "least to most expensive within each country" in text
+
+
+def test_a_station_carries_its_country_flag():
+    text = read_qmd()
+    assert "function countryFlag(code)" in text
+    # 0x1F1E6 is regional indicator A; the flag is built from the country code
+    # rather than shipped as an image per country.
+    assert "0x1f1e6" in text
+    assert text.count('class="cgp-flag"') >= 2

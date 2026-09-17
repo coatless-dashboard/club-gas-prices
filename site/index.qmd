@@ -43,7 +43,7 @@ COUNTRY_NAMES = {
   };
 }
 
-// Okabe-Ito, which stays distinguishable for the common colour-vision
+// Okabe-Ito, which stays distinguishable for the common color-vision
 // deficiencies. TW takes a brown in place of Okabe-Ito yellow, which is
 // illegible on a light background.
 COUNTRY_COLORS = {
@@ -541,7 +541,8 @@ function popupHtml(station, vol) {
   );
   const place = [station.city, station.region].filter((v) => v).join(", ");
   parts.push(
-    `<div class="cgp-popup-place">${escapeHtml(place)}${place ? " · " : ""}` +
+    `<div class="cgp-popup-place"><span class="cgp-flag">${countryFlag(station.country)}</span> ` +
+      `${escapeHtml(place)}${place ? " · " : ""}` +
       `${escapeHtml(COUNTRY_NAMES[station.country] || station.country)}</div>`
   );
   const rows = [];
@@ -577,6 +578,15 @@ function popupHtml(station, vol) {
   return `<div class="cgp-popup">${parts.join("")}</div>`;
 }
 
+// The country's flag, from its two-letter code. Regional indicator symbols sit
+// at U+1F1E6 in the same order as A-Z.
+function countryFlag(code) {
+  if (!code || code.length !== 2) return "";
+  return String.fromCodePoint(
+    ...[...code.toUpperCase()].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65)
+  );
+}
+
 // What hovering a station shows: enough to compare it with its neighbours
 // without opening anything. The click popup keeps the full detail -- every
 // grade as published, the rate used, and the link into its history.
@@ -595,7 +605,9 @@ function hoverHtml(station) {
   const age = hoursAgo(station.captured_at_utc, nowTick);
   const parts = [
     `<div class="cgp-hover-name">${escapeHtml(station.name)}</div>`,
-    `<div class="cgp-hover-place">${escapeHtml(place)}${place ? " · " : ""}${escapeHtml(
+    `<div class="cgp-hover-place"><span class="cgp-flag">${countryFlag(
+      station.country
+    )}</span> ${escapeHtml(place)}${place ? " · " : ""}${escapeHtml(
       COUNTRY_NAMES[station.country] || station.country
     )}</div>`
   ];
@@ -616,7 +628,7 @@ function hoverHtml(station) {
   return `<div class="cgp-hover">${parts.join("")}</div>`;
 }
 
-// A cluster is coloured by the median of the stations inside it, so a group
+// A cluster is colored by the median of the stations inside it, so a group
 // still reads as cheap or dear rather than as a neutral blob.
 function clusterIcon(el, cluster) {
   const pal = el._pal || palette;
@@ -626,7 +638,7 @@ function clusterIcon(el, cluster) {
     .filter((f) => f != null)
     .sort((a, b) => a - b);
   // A true median: with two stations the upper one alone would paint the whole
-  // group its colour.
+  // group its color.
   const mid = fractions.length / 2;
   const median = !fractions.length
     ? null
@@ -645,7 +657,7 @@ function clusterIcon(el, cluster) {
   });
 }
 
-// A graduated symbol: dearer stations draw larger, and every symbol grows with
+// A graduated symbol: costlier stations draw larger, and every symbol grows with
 // zoom. Zoomed out, small dots keep a continent readable instead of merging into
 // one blob; zoomed in, the symbols separate and carry their price.
 function markerRadius(zoom, fraction) {
@@ -678,7 +690,7 @@ function applyZoomStyling(el) {
   });
 }
 
-// Rebuilt whenever Grade, Currency, Volume or the colour mode changes.
+// Rebuilt whenever Grade, Currency, Volume or the color mode changes.
 markerLayerUpdate = {
   const el = mapEl;
   const layer = el._markers;
@@ -949,7 +961,7 @@ stationMedianRows = {
 
 ## Row {height="18%"}
 
-::: {.card .cgp-controls-card title="Colour and countries" padding="4px"}
+::: {.card .cgp-controls-card title="Color and countries" padding="4px"}
 
 ```{ojs}
 //| output: false
@@ -957,7 +969,7 @@ viewof colorMode = radioControl(
   "colormode",
   [["Rank within country", "rank"], ["Absolute", "absolute"]],
   "rank",
-  "Colour"
+  "Color"
 )
 ```
 
@@ -967,11 +979,11 @@ mapLegend = {
   const pal = palette;
   const caption =
     effectiveColorMode === "rank"
-      ? "cheapest to dearest within each country"
+      ? "least to most expensive within each country"
       : `USD ${volumeLabel}, 2nd to 98th percentile`;
-  return html`<div class="cgp-legend"><span>Cheaper</span>${pal.ramp.map(
+  return html`<div class="cgp-legend"><span class="cgp-legend-end">Lower price</span>${pal.ramp.map(
     (color) => html`<span class="cgp-swatch" style=${"background:" + color}></span>`
-  )}<span>Dearer</span>
+  )}<span class="cgp-legend-end">Higher price</span>
     <span class="cgp-legend-note">${caption}</span>
     <span class="cgp-legend-missing"><span class="cgp-swatch" style=${
       "background:" + pal.missing
@@ -985,8 +997,8 @@ countryPills = {
   const el = mapEl;
   const buttons = ["World", ...COUNTRY_ORDER].map((code) => {
     const button = html`<button type="button" data-zoom=${code}>${
-      code === "World" ? "World" : COUNTRY_NAMES[code]
-    }</button>`;
+      code === "World" ? "🌐" : countryFlag(code)
+    } ${code === "World" ? "World" : COUNTRY_NAMES[code]}</button>`;
     button.addEventListener("click", () => {
       const bounds = countryBounds.get(code === "World" ? "__all__" : code);
       if (bounds) el._map.fitBounds(bounds, {padding: [24, 24], maxZoom: 11});
@@ -1746,12 +1758,12 @@ Frankfurter v2 and stores it with every row. If that fails, a dated
 `@fawazahmed0/currency-api` file is used; if that also fails, the most recent
 stored rate within 7 days is carried forward and labelled
 `carried-forward:<source>`. If no rate is available the USD columns are null:
-those stations are drawn grey on the map, show their local price only, and are
+those stations are drawn gray on the map, show their local price only, and are
 left out of USD aggregates.
 
 **Filtering.** Placeholder prices are dropped: stations that price before they
 open (the pre-opening 3.999 / 5.999 pattern in the United States, and Canadian
-warehouses with no gas hours), premium-only business-centre placeholders, and
+warehouses with no gas hours), premium-only business-center placeholders, and
 values outside per-unit sanity bounds.
 
 **How fresh a price really is.** A capture records when *we* read a price, not
@@ -1781,7 +1793,7 @@ aboutAttribution = {
 }
 ```
 
-Code is MIT licensed. The data files carry no licence claim and include the
+Code is MIT licensed. The data files carry no license claim and include the
 notice above.
 
 :::

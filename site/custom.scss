@@ -58,6 +58,17 @@ $navbar-fg: #f4f7f8 !default;
   min-width: 0;
 }
 
+.cgp-legend-end {
+  font-weight: 600;
+}
+
+// Flags render at the surrounding size on every platform that has them, and as
+// two letters on the ones that do not.
+.cgp-flag {
+  font-size: 1.05em;
+  line-height: 1;
+}
+
 .cgp-legend-missing {
   display: inline-flex;
   align-items: center;
@@ -422,7 +433,7 @@ $navbar-fg: #f4f7f8 !default;
   z-index: 1030;
 }
 
-// The colour control, its legend and the country jump-buttons, in one flow.
+// The color control, its legend and the country jump-buttons, in one flow.
 // The first two share a line while there is room and the legend wraps under it
 // when there is not; the country pills always get their own.
 .cgp-map-controls {
@@ -451,7 +462,7 @@ $navbar-fg: #f4f7f8 !default;
   min-width: 0;
 }
 
-// A group of stations, coloured by the median of the stations inside it. The
+// A group of stations, colored by the median of the stations inside it. The
 // plugin's own styles draw a pale blue disc that carries no meaning here, so
 // the badge is drawn from scratch.
 .cgp-cluster {
