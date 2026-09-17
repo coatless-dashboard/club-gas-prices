@@ -410,6 +410,40 @@ def main() -> int:
                 failures.add(f"step 4: the station chart drew {marks} marks for {first_key}")
             else:
                 print(f"step 4: station chart drew {marks} marks for {first_key}", flush=True)
+            # The history chart answers on hover too, and the panel says which
+            # rate turned the local price into the USD one.
+            spot = page.evaluate(
+                """() => {
+                  const svg = [...document.querySelectorAll('#station svg')]
+                    .find((s) => s.getBoundingClientRect().width > 200
+                                 && s.querySelector("g[aria-label='dot'] circle"));
+                  if (!svg) return null;
+                  const dots = [...svg.querySelectorAll("g[aria-label='dot'] circle")];
+                  const r = dots[Math.floor(dots.length / 2)].getBoundingClientRect();
+                  return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                }"""
+            )
+            if not spot:
+                failures.add("step 4: no station chart to hover")
+            else:
+                page.mouse.move(spot["x"], spot["y"])
+                page.wait_for_timeout(700)
+                tip = page.evaluate(
+                    """() => {
+                      const svg = [...document.querySelectorAll('#station svg')]
+                        .find((s) => s.getBoundingClientRect().width > 200
+                                     && s.querySelector("g[aria-label='dot'] circle"));
+                      const g = svg && svg.querySelector("g[aria-label='tip']");
+                      return g ? g.textContent.trim() : "";
+                    }"""
+                )
+                if not tip:
+                    failures.add("step 4: hovering the station chart raised no tip")
+                else:
+                    print(f"step 4: chart tip reads {tip.splitlines()[0][:36]!r}", flush=True)
+            panel = page.locator("#station").inner_text()
+            if "USD" not in panel:
+                failures.add("step 4: the station panel never mentions the USD conversion")
             check_clean(page, failures, "step 4", collected)
 
             browser.close()

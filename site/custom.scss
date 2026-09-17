@@ -83,6 +83,20 @@ $navbar-fg: #f4f7f8 !default;
   border-radius: 2px;
 }
 
+// A chart card holds its content at the top; centered, a short chart floats in
+// the middle of the card with its key stranded above it.
+.cgp-chart-card .cell-output-display,
+.cgp-chart-card .html-fill-item {
+  justify-content: flex-start;
+}
+
+// The key for a dot mark, rather than for a band.
+.cgp-legend .cgp-swatch-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
 .cgp-pills {
   display: flex;
   gap: 0.3rem;

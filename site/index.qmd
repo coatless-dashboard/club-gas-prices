@@ -578,6 +578,52 @@ function popupHtml(station, vol) {
   return `<div class="cgp-popup">${parts.join("")}</div>`;
 }
 
+// The last point of whichever nearby station sits highest at the end of the
+// window, so its label does not land on top of another line.
+function topNeighbour(rows) {
+  if (!rows.length) return [];
+  const lastDay = Math.max(...rows.map((row) => row.day.getTime()));
+  const atEnd = rows.filter((row) => row.day.getTime() === lastDay);
+  if (!atEnd.length) return [];
+  return [atEnd.reduce((best, row) => (row.value > best.value ? row : best))];
+}
+
+// Plot's color legend keys a color scale; what needs explaining on the
+// compare chart is a shape, so the key is HTML and reuses the map legend's
+// classes. It names marks and never units, so it reads true in either currency.
+function spreadKeyEl(dotWords, barWords, note) {
+  return html`<div class="cgp-legend">
+    <span class="cgp-swatch cgp-swatch-dot" style=${"background:" + palette.muted}></span>
+    <span>${dotWords}</span>
+    <span class="cgp-swatch" style=${"background:" + palette.muted + ";opacity:0.32"}></span>
+    <span>${barWords}</span>
+    <span class="cgp-legend-note">${note}</span>
+  </div>`;
+}
+
+// The rate the USD column was converted at, stored with the reading rather than
+// looked up now, so the figure shown is the one the conversion used. A station
+// that prices in USD has nothing to convert and says so.
+function rateNote(station) {
+  const entry =
+    station &&
+    (gradeEntry(station, "regular") ||
+      gradeEntry(station, "premium") ||
+      gradeEntry(station, "diesel"));
+  if (!entry) return "";
+  if (entry.currency === "USD") {
+    return html`<div class="cgp-notice">Published in USD, so no conversion is applied.</div>`;
+  }
+  if (entry.fx_usd_per_unit == null) {
+    return html`<div class="cgp-notice">No exchange rate was available for this reading, so the
+      USD column is empty.</div>`;
+  }
+  return html`<div class="cgp-notice">1 ${entry.currency} =
+    ${entry.fx_usd_per_unit.toPrecision(6)} USD, the
+    ${entry.fx_rate_date ? `${entry.fx_rate_date} ` : ""}reference rate stored with this reading
+    (${entry.fx_source}).</div>`;
+}
+
 // The country's flag, from its two-letter code. Regional indicator symbols sit
 // at U+1F1E6 in the same order as A-Z.
 function countryFlag(code) {
@@ -1077,7 +1123,7 @@ mapEl = {
 
 ## Row {height="86%"}
 
-::: {.card title="Median price by country"}
+::: {.card .cgp-chart-card title="Median price by country"}
 
 ```{ojs}
 compareView = {
@@ -1091,21 +1137,42 @@ compareView = {
       median: perVolume(row.median_usd_per_litre, volume),
       p25: perVolume(row.p25_usd_per_litre, volume),
       p75: perVolume(row.p75_usd_per_litre, volume),
-      n: row.n_stations_usd
+      // n_stations counts stations; n_stations_usd counts the ones that had an
+      // exchange rate. The annotation said "stations" and showed the latter.
+      n: row.n_stations,
+      nUsd: row.n_stations_usd
     }))
     .filter((row) => row.median != null);
   if (!data.length) {
     return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
   }
-  return Plot.plot({
+  const figure = Plot.plot({
     height: 60 + data.length * 36,
     marginLeft: 200,
-    marginRight: 70,
+    marginRight: 110,
     style: {background: "transparent", color: palette.text},
     x: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
     y: {domain: data.map((row) => row.label), label: null},
     marks: [
-      Plot.ruleY(data, {y: "label", x1: "p25", x2: "p75", stroke: palette.grid, strokeWidth: 8}),
+      Plot.ruleY(data, {
+        y: "label",
+        x1: "p25",
+        x2: "p75",
+        // palette.grid is a 12% wash and read as a rendering artefact rather
+        // than as the middle half of a country's stations.
+        stroke: palette.muted,
+        strokeOpacity: 0.32,
+        strokeWidth: 10
+      }),
+      Plot.text(data, {
+        y: "label",
+        frameAnchor: "right",
+        textAnchor: "start",
+        dx: 8,
+        fontSize: 11,
+        fill: palette.muted,
+        text: (row) => `${row.n} station${row.n === 1 ? "" : "s"}`
+      }),
       Plot.dot(data, {
         y: "label",
         x: "median",
@@ -1132,11 +1199,18 @@ compareView = {
             `${COUNTRY_NAMES[row.country] || row.country}\n` +
             `median ${fmtNumber(row.median, priceDigits)} USD ${volumeLabel}\n` +
             `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}\n` +
-            `${row.n} station${row.n === 1 ? "" : "s"}`
+            `${row.n} station${row.n === 1 ? "" : "s"}` +
+            (row.nUsd != null && row.nUsd !== row.n ? `, ${row.nUsd} with a USD price` : "")
         })
       )
     ]
   });
+  return html`<div>${spreadKeyEl(
+    "median station",
+    "middle half of stations: p25 to p75",
+    "Half of a country's stations price inside the bar — a quarter below its left end, " +
+      "a quarter above its right end."
+  )}${figure}</div>`;
 }
 ```
 
@@ -1154,6 +1228,8 @@ compareNotes = {
   return html`<div class="cgp-notice">
     ${notSold.length ? html`<div>Not sold: ${notSold.join(", ")}.</div>` : ""}
     <div>Each country shows its own newest day with stations; an older day is marked stale.</div>
+    <div>The station count is the stations that posted a ${GRADE_LABELS[grade]} price that day —
+      not every warehouse, and not stations selling only another grade.</div>
     <div>Grades are not equivalent across countries: see the grade table on the About page.
       UK and Australian diesel is premium diesel. Costco prices are not national averages.</div>
   </div>`;
@@ -1573,6 +1649,20 @@ stationChart = {
         stroke: palette.muted,
         strokeOpacity: 0.35
       }),
+      // The faint lines were the only unlabelled thing on the chart. One label
+      // on the highest of them at its last day says what the whole set is.
+      Plot.text(topNeighbour(neighbours), {
+        x: "day",
+        y: "value",
+        text: () => {
+          const n = new Set(neighbours.map((row) => row.key)).size;
+          return n === 1 ? "nearest station" : `nearest ${n} stations`;
+        },
+        dx: 6,
+        dy: -8,
+        textAnchor: "start",
+        fill: palette.muted
+      }),
       Plot.line(medians, {
         x: "day",
         y: "value",
@@ -1594,10 +1684,21 @@ stationChart = {
         y: "value",
         z: "grade",
         fill: "grade",
-        r: 3,
-        title: (row) =>
-          `${row.grade} ${row.day.toISOString().slice(0, 10)}: ${fmtNumber(row.value, priceDigits)}`
-      })
+        r: 3
+      }),
+      // Last, so it paints over the median label rather than under it.
+      Plot.tip(
+        own,
+        Plot.pointer({
+          x: "day",
+          y: "value",
+          ...tipStyle(),
+          title: (row) =>
+            `${selectedMeta.name} · ${row.day.toISOString().slice(0, 10)}\n` +
+            `${GRADE_LABELS[row.grade] || row.grade} ${fmtNumber(row.value, priceDigits)} ` +
+            `${unit}${volumeShort}`
+        })
+      )
     ]
   });
   return html`<div class="cgp-station-chart">${figure}</div>`;
@@ -1671,6 +1772,7 @@ stationDetail = {
     <div class="cgp-notice">First seen ${String(selectedMeta.first_seen_utc || "").slice(0, 10)},
       last seen ${String(selectedMeta.last_seen_utc || "").slice(0, 10)},
       status ${selectedMeta.status}.</div>
+    ${rateNote(selectedLatest)}
     ${links}
     <div class="cgp-notice">Nearest active stations:</div>
     <ul class="cgp-notice">${neighbours}</ul>
