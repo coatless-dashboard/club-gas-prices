@@ -1,0 +1,38 @@
+[project]
+name = "costco-gas-prices-dashboard"
+version = "0.1.0"
+description = "A Quarto site for Costco fuel prices, rendered from the coatless-datasets release."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+# The site itself is HTML, OJS and SCSS: nothing here is needed to render it.
+# Python appears only in the tests and the local sample data.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    # `tests/fixtures/site_sample.py` writes the sample parquet files.
+    "polars>=1.18,<2",
+    # `tests/test_range_server.py` drives the smoke test's static server.
+    "httpx>=0.28,<1",
+    "pytest>=8.3,<9",
+    "ruff>=0.8,<1",
+]
+# CI only: the Render workflow drives the built site with Playwright.
+smoke = [
+    "playwright==1.63.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/smoke is launched by the Render workflow as a plain script, not by pytest.
+addopts = "-q --strict-markers --ignore=tests/smoke"

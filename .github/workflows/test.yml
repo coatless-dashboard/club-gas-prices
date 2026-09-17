@@ -1,0 +1,79 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install the locked environment
+        run: uv sync --locked
+
+      - name: ruff check
+        run: uv run ruff check
+
+      - name: ruff format
+        run: uv run ruff format --check
+
+      - name: pytest
+        run: uv run pytest
+
+      - name: actionlint
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+
+  # The site is only ever rendered by Render, which deploys what it renders. A
+  # pull request that breaks a chart would otherwise reach Pages before anyone
+  # saw it, so the same render and the same smoke test run here, against the
+  # sample data, and deploy nothing.
+  render:
+    name: Render and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@8a96df13519ee81fd526f2dfca5962811136661b # v2.2.0
+        with:
+          version: 1.10.18
+
+      - name: Build the sample data
+        run: |
+          uv sync --locked
+          uv run python tests/fixtures/site_sample.py site/data
+
+      - name: Render the site
+        run: quarto render site
+
+      - name: Smoke test the rendered site
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          cp -R site/data _site/data
+          uv sync --locked --group smoke
+          uv run python tests/smoke/smoke_site.py _site

@@ -12,17 +12,13 @@ dist/
 # Kept locally, never published.
 docs/
 
-# Quarto build output and generated site data
+# Quarto build output, and the site data underneath it -- downloaded from the
+# collector's release or written by the sample fixture, never committed.
 site/_site/
 site/.quarto/
 site/data/
 _site/
 .quarto/
-
-# Local capture output and downloaded release state
-out/
-state/
-releases/
 
 # Local environment and credentials
 .env

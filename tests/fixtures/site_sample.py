@@ -16,7 +16,34 @@ from pathlib import Path
 
 import polars as pl
 
-from costco_gas.sitedata import with_change_flags
+# Kept in step with costco_gas.sitedata.with_change_flags in the data
+# repository. It is copied rather than imported because this repository holds
+# no pipeline: the sample has to carry the same `changed` and `moved_intraday`
+# columns the real history.parquet does, or the station page's change list
+# renders against a shape the site never actually receives.
+INTRADAY_EPSILON = 5e-5
+
+
+def with_change_flags(deduped: pl.DataFrame) -> pl.DataFrame:
+    """Mark where a price moved, day over day and within a day."""
+    previous = (
+        pl.col("price_local_per_litre")
+        .shift(1)
+        .over(["station_key", "grade"], order_by="capture_date")
+    )
+    moved = (
+        (pl.col("price_max") - pl.col("price_min")).abs() > INTRADAY_EPSILON
+        if {"price_min", "price_max"} <= set(deduped.columns)
+        else pl.lit(None, dtype=pl.Boolean)
+    )
+    return deduped.with_columns(
+        pl.when(previous.is_null() | pl.col("price_local_per_litre").is_null())
+        .then(pl.lit(None, dtype=pl.Boolean))
+        .otherwise((pl.col("price_local_per_litre") - previous).abs() > INTRADAY_EPSILON)
+        .alias("changed"),
+        moved.alias("moved_intraday"),
+    )
+
 
 LITRES_PER_GALLON = 3.785411784
 

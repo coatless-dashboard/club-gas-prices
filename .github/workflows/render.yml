@@ -26,7 +26,8 @@ permissions:
 
 env:
   DATA_REPO: coatless-datasets/costco-gas-prices
-  SITE_URL: https://coatless-dashboard.github.io/costco-gas-prices
+  # The org-level Pages domain serves this repository under its own name.
+  SITE_URL: https://dashboard.thecoatlessprofessor.com/costco-gas-prices
 
 jobs:
   render:

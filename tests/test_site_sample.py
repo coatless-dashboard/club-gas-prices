@@ -28,9 +28,21 @@ SUMMARY_COLUMNS = [
     "p25_usd_per_litre",
     "p75_usd_per_litre",
 ]
-# Imported rather than restated: a second copy of this list is how the sample
-# and the real build come to disagree about what the page can query.
-from costco_gas.sitedata import HISTORY_COLUMNS  # noqa: E402
+# The two parquet schemas the pages query, restated here because the code that
+# writes the real ones lives in the data repository. This is the seam: if
+# `costco_gas.sitedata` ever changes a column, this file is what has to change
+# with it, and these two tests are what fail if it does not.
+HISTORY_COLUMNS = [
+    "capture_date",
+    "station_key",
+    "grade",
+    "price_local_per_litre",
+    "price_usd_per_litre",
+    "currency",
+    "n_captures",
+    "changed",
+    "moved_intraday",
+]
 
 
 def test_build_writes_the_five_files(tmp_path: Path):
