@@ -285,3 +285,32 @@ def test_the_sample_uses_keys_the_pipeline_would_emit():
             country, _, rest = row["station_key"].partition("-")
             if country in ("MX", "TW", "AU"):
                 assert rest.isdigit(), f"{row['station_key']} is not a warehouse number"
+
+
+def test_object_constants_use_the_block_form():
+    """`NAME = {…}` is a block in OJS, not an object literal. Getting this wrong
+    does not fail that cell -- it takes down every cell in the chunk."""
+    text = read_qmd()
+    for name in ("COUNTRY_NAMES", "COUNTRY_COLORS", "GRADE_LABELS", "WAREHOUSE_PAGE"):
+        block = text.split(f"{name} = ", 1)[1][:40]
+        assert block.lstrip().startswith("{\n  return"), f"{name} is not the block form"
+
+
+def test_only_verified_store_pages_are_linked():
+    """Checked on 2026-09-16: mx, au and jp answer at the bare /store/<name>
+    path; co.uk and com.tw give 404 bare and locale-prefixed, and the US and
+    Canadian feeds carry no store URL at all."""
+    text = read_qmd()
+    spec = text.split("WAREHOUSE_PAGE = ", 1)[1].split("\n}", 1)[0]
+    for code in ("MX", "AU", "JP"):
+        assert f"{code}: {{base:" in spec
+    for code in ("GB", "TW", "US", "CA"):
+        assert f"{code}: {{base:" not in spec
+
+
+def test_directions_prefer_coordinates():
+    """Address quality varies a lot across seven countries; a lat/lon does not."""
+    text = read_qmd()
+    body = text.split("function directionsUrl(", 1)[1].split("\n}", 1)[0]
+    assert "maps/dir/?api=1&destination=" in body
+    assert body.index("meta.lat") < body.index("meta.address")

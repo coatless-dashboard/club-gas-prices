@@ -684,6 +684,90 @@ function dayText(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function stationLinksEl(meta) {
+  const directions = directionsUrl(meta);
+  const warehouse = warehouseUrl(meta);
+  if (!directions && !warehouse) return "";
+  const links = [];
+  if (directions) {
+    links.push(
+      html`<a href=${directions} target="_blank" rel="noopener">Directions on Google Maps</a>`
+    );
+  }
+  if (warehouse) {
+    links.push(html`<a href=${warehouse} target="_blank" rel="noopener">Costco store page</a>`);
+  }
+  return html`<div class="cgp-notice cgp-station-links">${links}</div>`;
+}
+
+// Costco publishes a store page per warehouse on its SAP storefronts, but only
+// some of them answer at the bare path the store feed gives. Checked on
+// 2026-09-16: mx, au and jp return 200; co.uk and com.tw return 404 both bare
+// and locale-prefixed, and the US and Canadian feeds carry no store URL at all.
+// Only the three that answer get a link.
+// Written as a block with an explicit return, the way every other constant in
+// this file is: in OJS `NAME = {…}` is a block, not an object literal, and the
+// parenthesised form does not survive here either.
+WAREHOUSE_PAGE = {
+  return {
+    MX: {base: "https://www.costco.com.mx/store/", field: "alt_id"},
+    AU: {base: "https://www.costco.com.au/store/", field: "alt_id"},
+    JP: {base: "https://www.costco.co.jp/store/", field: "source_station_id"}
+  };
+}
+
+function warehouseUrl(meta) {
+  const spec = meta && WAREHOUSE_PAGE[meta.country];
+  const name = spec && meta[spec.field];
+  return name ? spec.base + encodeURIComponent(name) : null;
+}
+
+// Google's Maps URLs API. Coordinates rather than the address string: they are
+// unambiguous, and address quality varies a lot between these seven countries.
+// The address is the fallback for a station captured without coordinates.
+function directionsUrl(meta) {
+  if (!meta) return null;
+  if (meta.lat != null && meta.lon != null) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${meta.lat},${meta.lon}`;
+  }
+  const parts = [meta.address, meta.city, meta.region, meta.postcode, COUNTRY_NAMES[meta.country]]
+    .filter((v) => v)
+    .join(", ");
+  return parts
+    ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(parts)}`
+    : null;
+}
+
+// Consecutive readings where the price moved, newest first. Derived from the
+// series already fetched for the chart rather than a second query, and it
+// carries what it moved FROM, which the flag alone does not.
+function priceChanges(rows, limit = 30) {
+  const byGrade = new Map();
+  for (const row of rows) {
+    if (row.price_local_per_litre == null) continue;
+    if (!byGrade.has(row.grade)) byGrade.set(row.grade, []);
+    byGrade.get(row.grade).push(row);
+  }
+  const out = [];
+  for (const [gradeKey, series] of byGrade) {
+    series.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+    for (let i = 1; i < series.length; i += 1) {
+      if (!series[i].changed) continue;
+      out.push({
+        grade: gradeKey,
+        d: series[i].d,
+        from: series[i - 1].price_local_per_litre,
+        to: series[i].price_local_per_litre,
+        fromUsd: series[i - 1].price_usd_per_litre,
+        toUsd: series[i].price_usd_per_litre,
+        currency: series[i].currency
+      });
+    }
+  }
+  out.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+  return out.slice(0, limit);
+}
+
 // The rate the USD column was converted at, stored with the reading rather than
 // looked up now, so the figure shown is the one the conversion used. A station
 // that prices in USD has nothing to convert and says so.
@@ -1073,12 +1157,15 @@ selectedLatest = selectedStation
   : null
 
 nearestStations = {
-  if (!selectedLatest || selectedLatest.lat == null) return [];
+  // A station with no current price still has coordinates in its record, and
+  // its neighbours are exactly what a reader wants when it has stopped posting.
+  const origin = selectedLatest || selectedMeta;
+  if (!origin || origin.lat == null) return [];
   return latest
     .filter(
       (row) =>
-        row.station_key !== selectedLatest.station_key &&
-        row.country === selectedLatest.country &&
+        row.station_key !== origin.station_key &&
+        row.country === origin.country &&
         row.status === "active" &&
         row.lat != null &&
         row.lon != null
@@ -1086,7 +1173,7 @@ nearestStations = {
     .map((row) => ({
       station_key: row.station_key,
       name: row.name,
-      km: haversineKm(selectedLatest.lat, selectedLatest.lon, row.lat, row.lon)
+      km: haversineKm(origin.lat, origin.lon, row.lat, row.lon)
     }))
     .sort((a, b) => a.km - b.km)
     .slice(0, 5);
@@ -1101,7 +1188,9 @@ stationHistoryRows = {
            strftime(capture_date, '%Y-%m-%d') AS d,
            price_local_per_litre,
            price_usd_per_litre,
-           currency
+           currency,
+           changed,
+           moved_intraday
     FROM history
     WHERE station_key IN (${sqlList(keys)})
     ORDER BY station_key, grade, capture_date
@@ -1262,7 +1351,7 @@ viewof compareCountry = asField(
 
 :::
 
-## Row {height="74%"}
+## Row {height="50%"}
 
 ::: {.card .cgp-chart-card title="Latest day"}
 
@@ -1992,7 +2081,7 @@ trendView = {
 
 # Station
 
-## Row {height="26%"}
+## Row {height="20%"}
 
 ::: {.card .cgp-search-card title="Find a station" padding="4px"}
 
@@ -2222,8 +2311,53 @@ stationDetail = {
       status ${selectedMeta.status}.</div>
     ${rateNote(selectedLatest)}
     ${links}
+    ${stationLinksEl(selectedMeta)}
     <div class="cgp-notice">Nearest active stations:</div>
     <ul class="cgp-notice">${neighbours}</ul>
+  </div>`;
+}
+```
+
+:::
+
+## Row {height="30%"}
+
+::: {.card .cgp-chart-card title="Recent price changes"}
+
+```{ojs}
+stationChanges = {
+  if (!selectedMeta) return html`<div class="cgp-notice">Nothing selected.</div>`;
+  if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;
+  const own = stationHistoryRows.filter((row) => row.station_key === selectedMeta.station_key);
+  const changes = priceChanges(own, 30);
+  if (!changes.length) {
+    return html`<div class="cgp-notice">No price change recorded yet for
+      ${selectedMeta.name}. Its prices have held for every day collected so far.</div>`;
+  }
+  const rows = changes.map((change) => {
+    const delta = change.to - change.from;
+    const pct = change.from > 0 ? (delta / change.from) * 100 : null;
+    const unit = currency === "USD" ? "USD" : change.currency;
+    const from = currency === "USD" ? change.fromUsd : change.from;
+    const to = currency === "USD" ? change.toUsd : change.to;
+    return html`<tr>
+      <td>${change.d}</td>
+      <td>${GRADE_LABELS[change.grade] || change.grade}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(from, volume), priceDigits)}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(to, volume), priceDigits)} ${unit}${volumeShort}</td>
+      <td class=${"cgp-num " + (delta > 0 ? "cgp-up" : "cgp-down")}>${
+        delta > 0 ? "▲" : "▼"
+      } ${pct == null ? "—" : fmtPct(pct)}</td>
+    </tr>`;
+  });
+  return html`<div>
+    <table class="cgp-table">
+      <thead><tr><th>Day</th><th>Grade</th><th class="cgp-num">From</th>
+        <th class="cgp-num">To</th><th class="cgp-num">Change</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="cgp-notice">The day a new price was first seen, not necessarily the day it
+      changed: a station is read a few times a day, and only while it is open.</div>
   </div>`;
 }
 ```

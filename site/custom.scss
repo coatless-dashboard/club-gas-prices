@@ -103,6 +103,22 @@ $navbar-fg: #f4f7f8 !default;
   flex: 0 0 auto;
 }
 
+// The two outbound links on a station.
+.cgp-station-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1rem;
+}
+
+// Direction of a price move.
+.cgp-up {
+  color: var(--cgp-ramp-5);
+}
+
+.cgp-down {
+  color: var(--cgp-ramp-1);
+}
+
 // The key for a dot mark, rather than for a band.
 .cgp-legend .cgp-swatch-dot {
   width: 12px;
