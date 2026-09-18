@@ -161,6 +161,13 @@ main.content > p {
   color: var(--cgp-muted);
 }
 
+// Two links continuing the line that names the station, kept apart from it and
+// from each other by the separator's own margins.
+.cgp-station-sep {
+  margin: 0 0.4rem;
+  color: var(--cgp-muted);
+}
+
 .cgp-popup-place,
 .cgp-popup-foot {
   color: var(--cgp-muted);

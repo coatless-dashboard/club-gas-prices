@@ -237,7 +237,7 @@ stationDetail = {
       COUNTRY_NAMES[selectedMeta.country]
     ]
       .filter((v) => v)
-      .join(", ")} · ${selectedMeta.station_key}</div>
+      .join(", ")} · ${selectedMeta.station_key}${stationLinksEl(selectedMeta)}</div>
     <table class="cgp-table">
       <thead><tr><th>Grade</th><th>As published</th>
         <th class="cgp-num">Local</th><th class="cgp-num">USD</th></tr></thead>
@@ -248,7 +248,6 @@ stationDetail = {
       ${statusSentence(selectedMeta)}</div>
     ${rateNote(selectedLatest)}
     ${links}
-    ${stationLinksEl(selectedMeta)}
     <div class="cgp-notice">Nearest active stations:</div>
     <ul class="cgp-notice">${neighbours}</ul>
   </div>`;

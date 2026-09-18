@@ -606,6 +606,9 @@ function dayText(date) {
   return date.toISOString().slice(0, 10);
 }
 
+// Continues the line that already names the place and the station, rather than
+// sitting under it as a row of its own: these are two short links about the
+// station just named, and a line of their own read as a section.
 function stationLinksEl(meta) {
   const directions = directionsUrl(meta);
   const warehouse = warehouseUrl(meta);
@@ -621,7 +624,12 @@ function stationLinksEl(meta) {
       html`<a href=${warehouse} target="_blank" rel="noopener">${brandName(meta)} page</a>`
     );
   }
-  return html`<div class="cgp-notice cgp-station-links">${links}</div>`;
+  // The separator is an element with margins, not a space in the template:
+  // htl trims whitespace at a template's edges, which ate the leading one and
+  // ran the first link into the station id.
+  return html`<span class="cgp-station-links">${links.map(
+    (link) => html`<span class="cgp-station-sep">·</span>${link}`
+  )}</span>`;
 }
 
 // Costco publishes a store page per warehouse on its SAP storefronts, but only
