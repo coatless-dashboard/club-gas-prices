@@ -433,6 +433,32 @@ def test_line_ends_are_labelled_per_series():
         assert 'z: "series"' in block.split("})")[0]
 
 
+def test_every_end_label_is_spread_once_its_chart_is_drawn():
+    """Plot 0.6.11 sets each end label at its own line's last point and never
+    moves one out of another's way, so lines ending at nearly the same value
+    printed their names over each other: Japan over Taiwan on Trends, and the
+    Station chart's two reference-line labels. Every one of them carries the
+    description the shared pass and the smoke test find it by, and every chart
+    that draws one runs the pass once it is drawn."""
+    sys.path.insert(0, str(ROOT / "tests" / "smoke"))
+    from smoke_site import END_LABELS
+
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    assert f'END_LABELS = "{END_LABELS}"' in shared
+    assert "function spreadEndLabels(figure)" in shared
+    for name, charts in (("trends.qmd", 2), ("station.qmd", 1)):
+        page = (SITE / name).read_text(encoding="utf-8")
+        marks = page.split("Plot.text(")[1:]
+        assert marks, name
+        for mark in marks:
+            assert "ariaDescription: END_LABELS" in mark.split("})", 1)[0], name
+        passes = page.split("spreadEndLabels(figure);")
+        assert len(passes) == charts + 1, name
+        for before in passes[:-1]:
+            # The pass reads the drawn SVG, so the chart it moves is built first.
+            assert "const figure = Plot.plot({" in before, name
+
+
 def test_dots_stand_down_once_they_stop_marking_anything():
     text = read_qmd()
     assert "function showDots(" in text

@@ -33,8 +33,10 @@ from smoke_site import (  # noqa: E402
     grade_table_problems,
     is_site_console_error,
     launch_browser,
+    overlapping_labels,
     parse_color,
     path_points,
+    stations_per_chain,
     time_of_day_charts,
     tip_units,
     unexplained_colors,
@@ -244,6 +246,42 @@ def test_a_date_axis_ticked_between_days_is_caught():
     assert time_of_day_charts([hourly, strip, days, months]) == ["Median", "Stations"]
     assert time_of_day_charts([{"chart": "Minutes", "labels": ["3:15", "3:30"]}]) == ["Minutes"]
     assert time_of_day_charts([days, months]) == []
+
+
+def label_box(text: str, top: float, height: float = 12, left: float = 1100) -> dict:
+    return {"text": text, "left": left, "right": left + 40, "top": top, "bottom": top + height}
+
+
+def test_end_labels_collide_only_where_they_share_width_and_height():
+    # Japan and Taiwan on the release's price chart, 5.7px apart.
+    japan, taiwan = label_box("Japan", 914.0), label_box("Taiwan", 919.7)
+    assert overlapping_labels([japan, taiwan]) == [("Japan", "Taiwan")]
+    # One above the other, as the page spreads them, and merely touching.
+    assert overlapping_labels([japan, label_box("Taiwan", 928.0)]) == []
+    assert overlapping_labels([japan, label_box("Taiwan", 925.8)]) == []
+    # Side by side at one height: a stalled series ends further left.
+    assert overlapping_labels([japan, label_box("Taiwan", 914.0, left=1000)]) == []
+    # Every colliding pair is named, and a two-line label is as tall as it is.
+    sams = label_box("United States Sam's Club", 905.0, height=22)
+    assert overlapping_labels([sams, japan, taiwan]) == [
+        ("United States Sam's Club", "Japan"),
+        ("United States Sam's Club", "Taiwan"),
+        ("Japan", "Taiwan"),
+    ]
+
+
+def test_every_chain_in_every_country_gets_its_first_stations_drawn():
+    assert stations_per_chain(TWO_CHAINS) == [
+        "US-COSTCO-1364",
+        "US-SAMS-8119",
+        "US-SAMS-6376",
+        "GB-COSTCO-Coventry",
+    ]
+    assert stations_per_chain(TWO_CHAINS, per=1) == [
+        "US-COSTCO-1364",
+        "US-SAMS-8119",
+        "GB-COSTCO-Coventry",
+    ]
 
 
 def test_a_tip_says_which_currency_each_price_is_in():

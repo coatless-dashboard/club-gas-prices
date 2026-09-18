@@ -710,6 +710,80 @@ function endLabelSpace(labels) {
   };
 }
 
+// Plot 0.6.11 sets each end label at its own line's last point and has no pass
+// that moves one out of another's way, so lines that end at nearly the same
+// value printed their names on top of each other: Japan over Taiwan on the
+// Trends chart, and on the Station chart "nearest 5 stations" over the median's
+// label. This runs on the drawn chart. It takes the end labels top to bottom
+// and moves each run of colliding ones apart by as little as clears them, the
+// run centered on the points its labels name and never past the top or bottom
+// of the plot. Only the height moves; x, color and text stay as Plot drew them.
+//
+// The chart is not on the page yet, so nothing can be measured. A label is
+// taken as its lines of the chart's type plus four tenths of a line: one line
+// of Plot's 10px type draws a box 12px tall, and the rest leaves room for a
+// `system-ui` font with taller ascenders than that. A mark takes part by
+// carrying `ariaDescription: END_LABELS`, which is also how the smoke test
+// finds the labels to check.
+END_LABELS = "line-end labels"
+
+function spreadEndLabels(figure) {
+  const texts = [...figure.querySelectorAll(`g[aria-description="${END_LABELS}"] text`)];
+  if (!texts.length) return figure;
+  const size = Number(texts[0].closest("svg").getAttribute("font-size")) || 10;
+  const range = figure.scale("y").range;
+  const top = Math.min(...range);
+  const bottom = Math.max(...range);
+  const labels = texts
+    .map((text) => {
+      const [, x, y, rest] = /^translate\(([^,]+),([^)]+)\)(.*)$/.exec(
+        text.getAttribute("transform")
+      );
+      // Plot puts a mark's dx and dy on its group, as a translate of its own.
+      const group = /translate\([^,]+,([^)]+)\)/.exec(text.parentNode.getAttribute("transform"));
+      const shift = group ? Number(group[1]) : 0;
+      const lines = Math.max(1, text.querySelectorAll("tspan").length);
+      return {text, x, rest, shift, want: shift + Number(y), height: (lines + 0.4) * size};
+    })
+    .sort((a, b) => a.want - b.want);
+  // More labels than the plot is tall share the shortfall, rather than the
+  // last of them being pushed off the bottom.
+  const total = labels.reduce((sum, label) => sum + label.height, 0);
+  const squeeze = Math.min(1, (bottom - top) / total);
+  for (const label of labels) label.height *= squeeze;
+  // A run of colliding labels is set as one block, at the mean of where its
+  // labels want to be. A block that then reaches the one above it joins it,
+  // and the two are set again as one.
+  const place = (members) => {
+    let height = 0;
+    let ideal = 0;
+    for (const label of members) {
+      ideal += label.want - height - label.height / 2;
+      height += label.height;
+    }
+    const start = Math.max(top, Math.min(bottom - height, ideal / members.length));
+    return {members, height, start};
+  };
+  const blocks = [];
+  for (const label of labels) {
+    blocks.push(place([label]));
+    while (blocks.length > 1) {
+      const [above, below] = blocks.slice(-2);
+      if (above.start + above.height <= below.start) break;
+      blocks.splice(-2, 2, place([...above.members, ...below.members]));
+    }
+  }
+  for (const block of blocks) {
+    let y = block.start;
+    for (const label of block.members) {
+      const center = y + label.height / 2 - label.shift;
+      label.text.setAttribute("transform", `translate(${label.x},${center})${label.rest}`);
+      y += label.height;
+    }
+  }
+  return figure;
+}
+
 // What the chart covers, said once rather than hovered for.
 function coverageNote(days, from, to, stations) {
   const span = `${days} day${days === 1 ? "" : "s"}, ${from} to ${to}`;

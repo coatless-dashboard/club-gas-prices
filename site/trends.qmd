@@ -289,7 +289,8 @@ trendView = {
           dx: 6,
           textAnchor: "start",
           lineWidth: ends.lineWidth,
-          fill: (row) => COUNTRY_COLORS[row.country]
+          fill: (row) => COUNTRY_COLORS[row.country],
+          ariaDescription: END_LABELS
         })
       ),
       // Last, so it paints over the country labels rather than under them.
@@ -316,6 +317,7 @@ trendView = {
       y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
       marks
     });
+    spreadEndLabels(figure);
     return html`<div>${figure}${coverageStrip(trendCountryRows, {
       label: GRADE_LABELS[grade]
     })}<div class="cgp-notice">${coverageNote(
@@ -439,7 +441,8 @@ trendView = {
           dx: 6,
           textAnchor: "start",
           lineWidth: ends.lineWidth,
-          fill: (row) => COUNTRY_COLORS[row.country]
+          fill: (row) => COUNTRY_COLORS[row.country],
+          ariaDescription: END_LABELS
         })
       ),
       Plot.tip(
@@ -483,6 +486,7 @@ trendView = {
       y: {label, grid: true, nice: true, tickFormat: fmtPct},
       marks
     });
+    spreadEndLabels(figure);
     return html`<div>${figure}${coverageStrip(trendCountryRows, {
       label: GRADE_LABELS[grade]
     })}<div class="cgp-notice">${coverageNote(

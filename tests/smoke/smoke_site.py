@@ -207,6 +207,28 @@ X_TICKS_JS = """() => [...document.querySelectorAll("svg")]
     })
   }))"""
 
+# The label at the end of each line on every Plot chart, as the box it is drawn
+# in: the names on the Trends charts and the Station chart's two reference-line
+# labels. The page marks them with the description below; a label on two lines
+# is two tspans, joined with a space as the tick labels are.
+END_LABELS = "line-end labels"
+END_LABELS_JS = """(description) => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"))
+  .map((svg) => ({
+    chart: svg.getAttribute("aria-label") || "",
+    labels: [...svg.querySelectorAll(`g[aria-description="${description}"] text`)]
+      .map((text) => {
+        const lines = [...text.querySelectorAll("tspan")].map((span) => span.textContent);
+        const r = text.getBoundingClientRect();
+        return {
+          text: lines.length ? lines.join(" ") : text.textContent,
+          left: r.left, right: r.right, top: r.top, bottom: r.bottom
+        };
+      })
+      .filter((box) => box.right > box.left)
+  }))
+  .filter((chart) => chart.labels.length)"""
+
 # The About page's grade table: its header and each row's cells.
 GRADE_TABLE_JS = """() => {
   const table = document.querySelector("table.cgp-table");
@@ -357,6 +379,26 @@ def expected_country_series(summary_path: Path, grade: str) -> int:
         (pl.col("level") == "country") & (pl.col("grade") == grade)
     )
     return rows.select("country", "brand").unique().height
+
+
+def stations_per_chain(latest: list[dict], per: int = 2) -> list[str]:
+    """The first `per` stations of every chain in every country, in file order.
+
+    Whether a station's two reference-line labels collide depends on where its
+    nearest stations' prices end against its median, which only drawing the
+    chart shows. So a few are drawn in every country rather than one: on the
+    release of 2026-09-18 the first Taiwan station's labels collided and the
+    first Australian one's did not, and on the sample only the second Canadian
+    station's do.
+    """
+    seen: dict[tuple, int] = {}
+    keys = []
+    for station in latest:
+        chain = (station.get("country"), station.get("brand"))
+        if seen.get(chain, 0) < per:
+            seen[chain] = seen.get(chain, 0) + 1
+            keys.append(station["station_key"])
+    return keys
 
 
 def fewest_stations_state(latest: list[dict], grade: str) -> str | None:
@@ -531,6 +573,21 @@ def time_of_day_charts(charts: list[dict]) -> list[str]:
         for chart in charts
         if any(TIME_OF_DAY.search(label) for label in chart["labels"])
     )
+
+
+def overlapping_labels(labels: list[dict], slack: float = 0.5) -> list[tuple[str, str]]:
+    """The pairs of labels whose boxes overlap, each as its two texts.
+
+    Two boxes overlap only where they share both some width and some height:
+    labels side by side, or one above the other, are both fine. `slack` lets
+    two boxes that merely touch, to a rounding error, pass.
+    """
+    return [
+        (a["text"], b["text"])
+        for a, b in itertools.combinations(labels, 2)
+        if min(a["right"], b["right"]) - max(a["left"], b["left"]) > slack
+        and min(a["bottom"], b["bottom"]) - max(a["top"], b["top"]) > slack
+    ]
 
 
 def tip_units(text: str) -> list[str]:
@@ -878,6 +935,30 @@ def chart_text_check(page, failures: Failures, step: str) -> None:
         print(f"{step}: ok, every chart label drawn whole", flush=True)
 
 
+def end_label_check(page, failures: Failures, step: str, *, required: bool) -> None:
+    """No label at the end of a line is drawn over another.
+
+    Plot sets each label at its own line's last point, so lines that end at
+    nearly the same value printed their names on top of each other until the
+    page spread them. `required` says the view draws end labels at all, so an
+    empty result there is a failure rather than a pass.
+    """
+    charts = page.evaluate(END_LABELS_JS, END_LABELS)
+    clashes = [
+        f"{chart['chart']}: {a!r} and {b!r}"
+        for chart in charts
+        for a, b in overlapping_labels(chart["labels"])
+    ]
+    if clashes:
+        failures.add(f"{step}: end labels drawn over each other: {clashes[:6]}")
+    elif not charts and required:
+        failures.add(f"{step}: no end labels to check")
+    elif charts:
+        count = sum(len(chart["labels"]) for chart in charts)
+        noun = "end label" if count == 1 else "end labels"
+        print(f"{step}: ok, {count} {noun}, none over another", flush=True)
+
+
 def chart_scale_check(page, failures: Failures, step: str) -> None:
     """Every chart is drawn at the width it is shown at, so its type is full size."""
     shrunk = page.evaluate(SHRUNK_CHARTS_JS)
@@ -1126,6 +1207,12 @@ def phone_steps(page, base_url: str, first_key: str, failures: Failures, collect
         wait_idle(page, failures, step)
         overflow_check(page, failures, step)
         chart_text_check(page, failures, step)
+        # A phone puts a chain on a line under its place, so a label there is
+        # twice as tall and collides sooner.
+        named = view.startswith("station.html?") or (
+            view.startswith("trends.html") and "separate" not in view
+        )
+        end_label_check(page, failures, step, required=named)
         off_center = page.evaluate(OFF_CENTER_CAPTIONS_JS)
         if off_center:
             failures.add(f"{step}: captions not over the start of their options: {off_center}")
@@ -1369,12 +1456,14 @@ def main() -> int:
             # strip under it included. A short history is where this breaks,
             # so the release's own data catches what the long sample cannot.
             # The change view in local currency also has to name each currency.
-            for view in ("", "?view=change&cur=Local", "?view=separate&cur=Local"):
+            # Every view that names its lines keeps the names apart.
+            for view in ("", "?view=change", "?view=change&cur=Local", "?view=separate&cur=Local"):
                 step = f"step 2d trends{view}"
                 page.goto(base_url + "trends.html" + view, wait_until="load")
                 wait_idle(page, failures, step)
                 day_ticks_check(page, failures, step)
                 chart_text_check(page, failures, step)
+                end_label_check(page, failures, step, required="separate" not in view)
                 if "change" in view:
                     change_tip_check(page, failures, step, currencies(latest))
                 check_clean(page, failures, step, collected)
@@ -1496,10 +1585,22 @@ def main() -> int:
                     print(f"step 4: chart tip reads {tip.splitlines()[0][:36]!r}", flush=True)
             day_ticks_check(page, failures, "step 4")
             chart_text_check(page, failures, "step 4")
+            end_label_check(page, failures, "step 4", required=True)
             panel = page.locator("body").inner_text()
             if "USD" not in panel:
                 failures.add("step 4: the station panel never mentions the USD conversion")
             check_clean(page, failures, "step 4", collected)
+
+            # Step 4b: the Station chart's two labels stay apart, on a few
+            # stations of every chain in every country.
+            for key in stations_per_chain(latest):
+                step = f"step 4b station {key}"
+                page.goto(
+                    f"{base_url}station.html?station={quote(key, safe='')}", wait_until="load"
+                )
+                wait_idle(page, failures, step)
+                end_label_check(page, failures, step, required=False)
+                check_clean(page, failures, step, collected)
 
             # Step 5: two chains stay apart on every page.
             if len({station.get("brand") for station in latest}) > 1:

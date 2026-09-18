@@ -157,7 +157,8 @@ stationChart = {
         dy: -8,
         textAnchor: "start",
         lineWidth: 7,
-        fill: palette.muted
+        fill: palette.muted,
+        ariaDescription: END_LABELS
       }),
       Plot.line(medians, {
         x: "day",
@@ -173,7 +174,8 @@ stationChart = {
         dx: 6,
         textAnchor: "start",
         lineWidth: 7,
-        fill: palette.muted
+        fill: palette.muted,
+        ariaDescription: END_LABELS
       }),
       Plot.line(own, {x: "day", y: "value", z: "grade", stroke: "grade", strokeWidth: 2.5}),
       Plot.dot(own, {
@@ -198,6 +200,9 @@ stationChart = {
       )
     ]
   });
+  // The two labels share the right margin, and where the nearest stations end
+  // close to the median the one sat on the other.
+  spreadEndLabels(figure);
   return html`<div class="cgp-station-chart">${figure}</div>`;
 }
 ```
