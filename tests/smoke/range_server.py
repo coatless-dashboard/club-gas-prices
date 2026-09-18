@@ -3,14 +3,20 @@
 `python -m http.server` ignores the `Range` request header: it always replies
 200 with the whole file, and advertises no `Accept-Ranges`. DuckDB-WASM reads
 Parquet by asking for byte ranges (the footer first, then individual row
-groups), and GitHub Pages answers those with 206 plus `Content-Range`. Serving
-the smoke test the way production does keeps the test honest, and keeps
-DuckDB-WASM off the whole-file fallback that a 200 forces it onto.
+groups), and GitHub Pages answers those with 206 plus `Content-Range`.
+
+Pages also gzips what it serves, INCLUDING `.parquet`, and then answers ranges
+against the compressed bytes: `Content-Length` is the compressed size and a
+range past it is a 416, however long the real file is. A reader that trusts the
+advertised length reads the "end" of the file somewhere in the middle of the
+gzip stream. `--emulate-pages` reproduces that, because serving plain bytes is
+what let a site that cannot read its own Parquet pass this test.
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import mimetypes
 import os
 import re
@@ -70,13 +76,25 @@ def parse_range(header: str, size: int) -> tuple[int, int] | None:
     return start, end
 
 
+# What Pages compresses. It is content-type driven, and octet-stream -- which
+# is what a .parquet is served as -- is in it.
+_COMPRESSIBLE = (
+    "text/",
+    "application/json",
+    "application/javascript",
+    "application/octet-stream",
+    "image/svg+xml",
+)
+
+
 class RangeRequestHandler(BaseHTTPRequestHandler):
-    server_version = "CostcoGasRangeServer/1.0"
+    server_version = "ClubGasRangeServer/1.0"
     protocol_version = "HTTP/1.1"
 
     directory: Path = Path(".")
     prefix: str = "/"
     verbose: bool = False
+    emulate_pages: bool = False
 
     def log_message(self, fmt: str, *args: object) -> None:
         if self.verbose:
@@ -108,8 +126,26 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
         if target is None:
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
-        size = target.stat().st_size
+        content_type = guess_type(target)
         header = self.headers.get("Range")
+        accepts_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "")
+        payload: bytes | None = None
+        encoding: str | None = None
+
+        if self.emulate_pages and content_type.startswith(_COMPRESSIBLE):
+            # Pages stores the object gzipped and ranges over THAT, whatever the
+            # request's Accept-Encoding says -- and Chrome sends `identity` on
+            # every ranged XHR, which is how a reader ends up being handed
+            # compressed bytes it never asked for. Only a request with no Range
+            # at all gets decompressed on the way out.
+            squeezed = gzip.compress(target.read_bytes())
+            if header is not None or accepts_gzip:
+                payload = squeezed
+                encoding = "gzip" if accepts_gzip else None
+            else:
+                payload = target.read_bytes()
+
+        size = len(payload) if payload is not None else target.stat().st_size
         start, end = 0, max(size - 1, 0)
         partial = False
         if header:
@@ -128,7 +164,9 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
         length = (end - start + 1) if size else 0
         status = HTTPStatus.PARTIAL_CONTENT if partial else HTTPStatus.OK
         self.send_response(status)
-        self.send_header("Content-Type", guess_type(target))
+        self.send_header("Content-Type", content_type)
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
         self.send_header("Content-Length", str(length))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "no-store")
@@ -136,6 +174,9 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
         if not body or length == 0:
+            return
+        if payload is not None:
+            self.wfile.write(payload[start : end + 1])
             return
         with target.open("rb") as handle:
             handle.seek(start)
@@ -149,7 +190,12 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
 
 
 def serve(
-    directory: os.PathLike[str] | str, prefix: str, port: int = 0, *, verbose: bool = False
+    directory: os.PathLike[str] | str,
+    prefix: str,
+    port: int = 0,
+    *,
+    verbose: bool = False,
+    emulate_pages: bool = False,
 ) -> tuple[ThreadingHTTPServer, str]:
     """Start the server on a background thread and return it with its base URL."""
     if not prefix.startswith("/"):
@@ -159,7 +205,12 @@ def serve(
     handler = type(
         "BoundRangeRequestHandler",
         (RangeRequestHandler,),
-        {"directory": Path(directory), "prefix": prefix, "verbose": verbose},
+        {
+            "directory": Path(directory),
+            "prefix": prefix,
+            "verbose": verbose,
+            "emulate_pages": emulate_pages,
+        },
     )
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     httpd.daemon_threads = True
@@ -174,8 +225,15 @@ def main() -> None:
     parser.add_argument("--dir", default="_site", help="directory to serve")
     parser.add_argument("--prefix", default="/club-gas-prices/", help="URL prefix")
     parser.add_argument("--port", type=int, default=8080, help="port (0 picks a free one)")
+    parser.add_argument(
+        "--emulate-pages",
+        action="store_true",
+        help="gzip like GitHub Pages, and range over the compressed bytes",
+    )
     args = parser.parse_args()
-    httpd, base_url = serve(args.dir, args.prefix, args.port, verbose=True)
+    httpd, base_url = serve(
+        args.dir, args.prefix, args.port, verbose=True, emulate_pages=args.emulate_pages
+    )
     print(f"serving {args.dir} at {base_url}", flush=True)
     try:
         threading.Event().wait()

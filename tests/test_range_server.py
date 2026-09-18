@@ -110,3 +110,43 @@ def test_paths_outside_the_prefix_and_the_root_are_404(base_url: str):
     assert httpx.get(origin + "/index.html").status_code == 404
     assert httpx.get(base_url + "missing.json").status_code == 404
     assert httpx.get(base_url + "../../etc/hosts").status_code == 404
+
+
+@pytest.fixture
+def pages_url(site: Path):
+    """The server in the mode that reproduces how GitHub Pages behaves."""
+    httpd, url = serve(site, "/club-gas-prices/", emulate_pages=True)
+    try:
+        yield url
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_pages_emulation_ranges_over_the_compressed_size(pages_url: str):
+    """The bug this mode exists to catch.
+
+    Pages stores the object gzipped and answers ranges against THAT, so the
+    length it advertises is the compressed one and a range past it is a 416 --
+    even though the file really is 1024 bytes. DuckDB-WASM believed the
+    advertised length, read the "footer" from the middle of the gzip stream and
+    took down every page that queries Parquet.
+    """
+    url = pages_url + "data/history.parquet"
+    # Chrome sends `identity` on ranged XHRs; Pages compresses anyway.
+    head = httpx.head(url, headers={"Accept-Encoding": "identity", "Range": "bytes=0-"})
+    squeezed = int(head.headers["Content-Range"].split("/")[1])
+    assert squeezed < len(PAYLOAD)
+
+    past_the_end = httpx.get(
+        url,
+        headers={"Accept-Encoding": "identity", "Range": f"bytes={len(PAYLOAD) - 4}-"},
+    )
+    assert past_the_end.status_code == 416
+    assert past_the_end.headers["Content-Range"] == f"bytes */{squeezed}"
+
+
+def test_pages_emulation_still_serves_a_whole_unranged_file(pages_url: str):
+    """Which is why fetching the file whole, rather than by range, is the fix."""
+    whole = httpx.get(pages_url + "data/history.parquet")
+    assert whole.content == PAYLOAD

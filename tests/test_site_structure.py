@@ -76,13 +76,30 @@ def test_no_parenthesised_object_literal_cells():
     assert re.search(r"^\s*\w+\s*=\s*\(\{", read_qmd(), re.M) is None
 
 
+def test_parquet_reaches_duckdb_as_bytes_not_as_a_url():
+    """Handed a URL, DuckDB-WASM range-reads the Parquet.
+
+    GitHub Pages stores these gzipped and ranges over the compressed copy, so it
+    reports the compressed length and 416s anything past it; DuckDB read the
+    footer from the middle of the gzip stream and every querying page died on
+    "No magic bytes found at end of file". A blob: url is the stdlib's signal to
+    registerFileBuffer instead, and one plain fetch has no ranges to get wrong.
+    """
+    text = read_qmd()
+    assert "URL.createObjectURL" in text
+    assert "await file.arrayBuffer()" in text
+    # The whole bug was handing these two straight to DuckDBClient.
+    for name in ("summary_daily", "history"):
+        assert f'buffered(FileAttachment("data/{name}.parquet")' in text
+
+
 def test_only_the_pages_that_query_load_duckdb():
     """A page that does not query never downloads DuckDB-WASM. In the dashboard
     this needed a MutationObserver on the active tab pane, because every cell of
     every view ran at load."""
     text = read_qmd()
     assert 'body.classList.contains("quarto-dark")' in text
-    assert "db = pageWantsDb" in text
+    assert "if (!pageWantsDb) return null;" in text
     assert "dbWanted" not in text
     wants = {
         name: "pageWantsDb = true" in (SITE / name).read_text(encoding="utf-8") for name in PAGES

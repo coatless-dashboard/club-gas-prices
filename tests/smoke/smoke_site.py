@@ -272,7 +272,10 @@ def main() -> int:
         raise SystemExit(f"{site_dir}/data/latest.json has no stations")
     first_key = latest[0]["station_key"]
 
-    httpd, base_url = serve(site_dir, PREFIX)
+    # Served the way Pages serves: gzipped, with ranges over the compressed
+    # bytes. Plain bytes let a site that could not read its own Parquet in
+    # production pass this test every time.
+    httpd, base_url = serve(site_dir, PREFIX, emulate_pages=True)
     origin = base_url[: base_url.index(PREFIX)]
     failures = Failures()
     collected = {"console": [], "pageerror": []}

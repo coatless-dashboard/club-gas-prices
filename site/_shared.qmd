@@ -99,21 +99,54 @@ palette = {
 // this took a MutationObserver watching which tab pane was active, because
 // every cell of every page ran at load; a site with a page per view does not
 // need one.
-// The one and only DuckDBClient.of call on a page.
-db = pageWantsDb
-  ? DuckDBClient.of({
-      summary_daily: FileAttachment("data/summary_daily.parquet"),
-      history: FileAttachment("data/history.parquet"),
-      // The array already fetched for the map, projected to the three columns
-      // SQL needs. Registering the FileAttachment instead would download
-      // stations.json a second time.
-      stations: stationsAll.map((s) => ({
-        station_key: s.station_key,
-        country: s.country,
-        region: s.region
-      }))
-    })
-  : null
+// Parquet handed to DuckDB as BYTES, never as a URL.
+//
+// Given a plain URL, DuckDB-WASM reads Parquet with range requests. GitHub
+// Pages stores these files gzipped and answers ranges against the compressed
+// copy: it reports the compressed length and 416s anything past it. DuckDB
+// then looks for the footer at that length, finds gzip rather than PAR1, and
+// every page that queries dies on "No magic bytes found at end of file".
+//
+// One ordinary fetch has none of that problem, because the browser undoes the
+// encoding before we see the bytes. Handing DuckDBClient a file whose url() is
+// a blob: is the stdlib's own signal to registerFileBuffer instead of
+// registerFileURL, so this takes a supported path and not a private one.
+//
+// FileAttachment is called with a literal both times on purpose: Quarto
+// resolves those paths when it renders, and a computed one 404s.
+db = {
+  if (!pageWantsDb) return null;
+  const buffered = async (file, name) => {
+    const bytes = await file.arrayBuffer();
+    const url = URL.createObjectURL(new Blob([bytes], {type: "application/octet-stream"}));
+    return {
+      file: {
+        // parquet_scan is pointed at this name, so it keeps the extension the
+        // stdlib switches on.
+        name,
+        mimeType: "application/octet-stream",
+        url: () => url,
+        arrayBuffer: async () => bytes
+      }
+    };
+  };
+  const [summary_daily, history] = await Promise.all([
+    buffered(FileAttachment("data/summary_daily.parquet"), "summary_daily.parquet"),
+    buffered(FileAttachment("data/history.parquet"), "history.parquet")
+  ]);
+  return DuckDBClient.of({
+    summary_daily,
+    history,
+    // The array already fetched for the map, projected to the three columns
+    // SQL needs. Registering the FileAttachment instead would download
+    // stations.json a second time.
+    stations: stationsAll.map((s) => ({
+      station_key: s.station_key,
+      country: s.country,
+      region: s.region
+    }))
+  });
+}
 
 nowTick = Generators.observe((notify) => {
   notify(new Date());
