@@ -195,6 +195,28 @@ STRIP_LINES_JS = """() => {
   return svg ? svg.querySelectorAll('g[aria-label="line"] path').length : null;
 }"""
 
+# The day ticks of the Trends chart and of the coverage strip under it: each
+# tick's label and the page x it is drawn at, in the order Plot draws them.
+STRIP_TICKS_JS = """() => {
+  const plots = [...document.querySelectorAll(".cgp-chart-card svg")]
+    .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"));
+  const at = plots.findIndex((svg) =>
+    (svg.getAttribute("aria-label") || "").startsWith("Stations that posted"));
+  if (at < 1) return null;
+  const ticks = (svg) => {
+    const labels = [...svg.querySelectorAll('g[aria-label="x-axis tick label"] text')]
+      .map((text) => {
+        const lines = [...text.querySelectorAll("tspan")].map((span) => span.textContent);
+        return lines.length ? lines.join(" ") : text.textContent;
+      });
+    return [...svg.querySelectorAll('g[aria-label="x-axis tick"] path')].map((path, i) => {
+      const r = path.getBoundingClientRect();
+      return {label: labels[i] || "", x: (r.left + r.right) / 2};
+    });
+  };
+  return {chart: ticks(plots[at - 1]), strip: ticks(plots[at])};
+}"""
+
 # The x-axis tick labels of every Plot chart. Plot writes a two-line label as
 # two tspans, which are joined with a space so "12 AM" and "Sep 17" stay apart.
 X_TICKS_JS = """() => [...document.querySelectorAll("svg")]
@@ -588,6 +610,25 @@ def overlapping_labels(labels: list[dict], slack: float = 0.5) -> list[tuple[str
         if min(a["right"], b["right"]) - max(a["left"], b["left"]) > slack
         and min(a["bottom"], b["bottom"]) - max(a["top"], b["top"]) > slack
     ]
+
+
+def misaligned_ticks(chart: list[dict], strip: list[dict], tolerance: float = 1.0) -> list[str]:
+    """How the coverage strip's first and last day ticks miss the chart's.
+
+    The strip is read a day at a time against the chart above it, so its end
+    ticks name the same days as the chart's and sit within `tolerance` px of
+    them. Empty when they do.
+    """
+    if not chart or not strip:
+        return [f"{len(chart)} chart ticks against {len(strip)} strip ticks"]
+    problems = []
+    for end, above, below in (("first", chart[0], strip[0]), ("last", chart[-1], strip[-1])):
+        if above["label"] != below["label"]:
+            problems.append(f"the {end} tick is {below['label']!r} under {above['label']!r}")
+        elif abs(below["x"] - above["x"]) > tolerance:
+            offset = below["x"] - above["x"]
+            problems.append(f"the {end} tick, {above['label']!r}, is {offset:+.1f}px off")
+    return problems
 
 
 def tip_units(text: str) -> list[str]:
@@ -1043,6 +1084,20 @@ def strip_check(page, failures: Failures, step: str, expected: int) -> None:
         print(f"{step}: ok, the coverage strip draws all {expected} series", flush=True)
 
 
+def strip_alignment_check(page, failures: Failures, step: str) -> None:
+    """Every day tick of the coverage strip sits under the same day on the chart."""
+    ticks = page.evaluate(STRIP_TICKS_JS)
+    if ticks is None:
+        failures.add(f"{step}: no coverage strip under a chart to line up with")
+        return
+    problems = misaligned_ticks(ticks["chart"], ticks["strip"])
+    if problems:
+        failures.add(f"{step}: the coverage strip is out of line with its chart: {problems}")
+    else:
+        first, last = ticks["chart"][0]["label"], ticks["chart"][-1]["label"]
+        print(f"{step}: ok, the strip's ticks sit under {first!r} to {last!r}", flush=True)
+
+
 def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures, collected):
     """Two chains in one country are two series on every page.
 
@@ -1213,6 +1268,8 @@ def phone_steps(page, base_url: str, first_key: str, failures: Failures, collect
             view.startswith("trends.html") and "separate" not in view
         )
         end_label_check(page, failures, step, required=named)
+        if view.startswith("trends.html") and "separate" not in view:
+            strip_alignment_check(page, failures, step)
         off_center = page.evaluate(OFF_CENTER_CAPTIONS_JS)
         if off_center:
             failures.add(f"{step}: captions not over the start of their options: {off_center}")
@@ -1456,7 +1513,8 @@ def main() -> int:
             # strip under it included. A short history is where this breaks,
             # so the release's own data catches what the long sample cannot.
             # The change view in local currency also has to name each currency.
-            # Every view that names its lines keeps the names apart.
+            # Every view that names its lines keeps the names apart, and every
+            # strip's ticks sit under the chart's own days.
             for view in ("", "?view=change", "?view=change&cur=Local", "?view=separate&cur=Local"):
                 step = f"step 2d trends{view}"
                 page.goto(base_url + "trends.html" + view, wait_until="load")
@@ -1464,6 +1522,8 @@ def main() -> int:
                 day_ticks_check(page, failures, step)
                 chart_text_check(page, failures, step)
                 end_label_check(page, failures, step, required="separate" not in view)
+                if "separate" not in view:
+                    strip_alignment_check(page, failures, step)
                 if "change" in view:
                     change_tip_check(page, failures, step, currencies(latest))
                 check_clean(page, failures, step, collected)

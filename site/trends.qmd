@@ -164,7 +164,17 @@ html`<div class="cgp-controls-row">${[
 // rather than a sentence beside it. `n_stations` is already queried and was
 // drawn nowhere, so a reader could not tell a real price move from a day when
 // half the stations were missing.
-function coverageStrip(rows, {label}) {
+//
+// The strip is read a day at a time against the chart above it, so it takes
+// that chart's width, margins and days, read back off the drawn chart, rather
+// than choosing its own. It had gutters of its own, 52px and 80px, under a
+// chart with Plot's 40px on the left and a right margin sized to its labels,
+// and no tick sat under the day it named.
+function coverageStrip(rows, {label, chart}) {
+  const svg = chart.tagName.toLowerCase() === "svg" ? chart : chart.querySelector(":scope > svg");
+  const width = Number(svg.getAttribute("width"));
+  const x = chart.scale("x");
+  const [first, last] = x.domain;
   const byDay = new Map();
   for (const row of rows) {
     // One point per series a day. Keyed on the day and the chain alone, each
@@ -179,21 +189,23 @@ function coverageStrip(rows, {label}) {
       n: Number(row.n_stations) || 0
     });
   }
-  const data = [...byDay.values()];
+  // A day the chart has no value for, such as one a currency had no rate on,
+  // would be drawn out in the margins, off the shared axis.
+  const data = [...byDay.values()].filter((row) => row.day >= first && row.day <= last);
   if (data.length < 2) return "";
   return Plot.plot({
-    width: chartWidth,
+    width,
     // Deliberately not "open stations": a dip is usually a collection failure,
     // not a closure, and the two read very differently.
     ariaLabel: `Stations that posted a ${label} price, by day`,
     // Plot writes a day tick on two lines, "17" over "Sep", and a 22px gutter
     // cut the month off every one of them.
     height: 82,
-    marginLeft: 52,
-    marginRight: 80,
+    marginLeft: x.range[0],
+    marginRight: width - x.range[1],
     marginBottom: 34,
     style: {background: "transparent", color: palette.text},
-    x: {label: null, grid: false, ticks: dayTicks(data)},
+    x: {label: null, grid: false, domain: x.domain, ticks: dayTicks(x.domain)},
     y: {label: "stations", grid: true, nice: true, ticks: 3},
     marks: [
       Plot.ruleY([0], {stroke: palette.text, strokeOpacity: 0.2}),
@@ -319,7 +331,8 @@ trendView = {
     });
     spreadEndLabels(figure);
     return html`<div>${figure}${coverageStrip(trendCountryRows, {
-      label: GRADE_LABELS[grade]
+      label: GRADE_LABELS[grade],
+      chart: figure
     })}<div class="cgp-notice">${coverageNote(
       days.length,
       dayText(new Date(days[0])),
@@ -488,7 +501,8 @@ trendView = {
     });
     spreadEndLabels(figure);
     return html`<div>${figure}${coverageStrip(trendCountryRows, {
-      label: GRADE_LABELS[grade]
+      label: GRADE_LABELS[grade],
+      chart: figure
     })}<div class="cgp-notice">${coverageNote(
       days.length,
       dayText(new Date(days[0])),

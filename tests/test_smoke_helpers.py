@@ -33,6 +33,7 @@ from smoke_site import (  # noqa: E402
     grade_table_problems,
     is_site_console_error,
     launch_browser,
+    misaligned_ticks,
     overlapping_labels,
     parse_color,
     path_points,
@@ -282,6 +283,27 @@ def test_every_chain_in_every_country_gets_its_first_stations_drawn():
         "US-SAMS-8119",
         "GB-COSTCO-Coventry",
     ]
+
+
+def test_the_strip_must_tick_the_charts_days_where_the_chart_does():
+    chart = [{"label": "2 Sep", "x": 40.0}, {"label": "9", "x": 520.5}, {"label": "15", "x": 937.0}]
+    # The strip as it was: its own 52px left gutter and 80px right one.
+    before = [
+        {"label": "2 Sep", "x": 52.0},
+        {"label": "9", "x": 555.0},
+        {"label": "15", "x": 1007.0},
+    ]
+    assert misaligned_ticks(chart, before) == [
+        "the first tick, '2 Sep', is +12.0px off",
+        "the last tick, '15', is +70.0px off",
+    ]
+    # Under half a pixel of rounding is the same place.
+    after = [{**tick, "x": tick["x"] + 0.4} for tick in chart]
+    assert misaligned_ticks(chart, after) == []
+    # The same place, but a different day, is not lined up either.
+    shifted = [{"label": "3", "x": 40.0}, *chart[1:]]
+    assert misaligned_ticks(chart, shifted) == ["the first tick is '3' under '2 Sep'"]
+    assert misaligned_ticks(chart, []) == ["3 chart ticks against 0 strip ticks"]
 
 
 def test_a_tip_says_which_currency_each_price_is_in():

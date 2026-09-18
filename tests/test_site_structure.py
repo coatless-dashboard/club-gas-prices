@@ -591,7 +591,7 @@ def test_a_daily_series_gets_daily_ticks():
             axes += 1
     assert axes >= 7  # the pattern finds the axes, so the loop is not vacuous
     strip = text.split("function coverageStrip(", 1)[1].split("\n}\n", 1)[0]
-    assert "ticks: dayTicks(data)" in strip
+    assert "ticks: dayTicks(x.domain)" in strip
 
 
 def test_the_change_tip_looks_the_currency_up_by_country():
@@ -770,6 +770,29 @@ def test_the_coverage_strip_draws_every_series():
     assert "const series = seriesOf(row);" in strip
     assert "byDay.set(`${row.d} :: ${series}`, {" in strip
     assert '${row.brand || ""}`' not in strip
+
+
+def test_the_coverage_strip_takes_its_charts_frame():
+    """The strip sits under the chart and is read against it a day at a time.
+    With gutters of its own it had none of the chart's: Plot's 40px on the left
+    of the price view, a right margin sized to the end labels on both, and so
+    no tick under the day it named."""
+    trends = (SITE / "trends.qmd").read_text(encoding="utf-8")
+    strip = trends.split("function coverageStrip(", 1)[1].split("\n}\n", 1)[0]
+    assert strip.startswith("rows, {label, chart}) {")
+    assert 'const x = chart.scale("x");' in strip
+    for option in (
+        "width,",
+        "marginLeft: x.range[0],",
+        "marginRight: width - x.range[1],",
+        "domain: x.domain",
+    ):
+        assert option in strip, option
+    for fixed in ("width: chartWidth", "marginLeft: 52", "marginRight: 80"):
+        assert fixed not in strip, fixed
+    # Both charts with a strip hand it the chart they drew.
+    assert trends.count("coverageStrip(trendCountryRows, {") == 2
+    assert trends.count("      chart: figure\n    })}") == 2
 
 
 def css_color(text: str, token: str) -> str:
