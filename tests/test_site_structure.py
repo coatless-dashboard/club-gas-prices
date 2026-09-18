@@ -203,6 +203,33 @@ def test_no_chart_is_built_in_a_hidden_chunk():
         assert "Plot.plot(" not in chunk, f"hidden chunk builds a chart: {first}"
 
 
+def test_a_hidden_control_is_placed_by_a_visible_chunk():
+    """Defining a control in a hidden chunk is fine; leaving it there is not.
+
+    An OJS cell's node is inserted where the cell is defined, so a `viewof` in
+    an `output: false` chunk renders nowhere unless a visible chunk interpolates
+    it. The map defines its colour control hidden on purpose and places it in
+    the control bar. The Changes page defined its state drill-down the same way
+    and placed it nowhere: the select sat in the DOM with every option, zero by
+    zero pixels, and the per-station view behind it could not be reached. No
+    error, no empty card, nothing to notice.
+    """
+    chunks = ojs_chunks()
+    hidden = [c for c in chunks if c.lstrip().startswith("//| output: false")]
+    shown = "\n".join(c for c in chunks if not c.lstrip().startswith("//| output: false"))
+    assert len(hidden) >= 4  # the chunk split works, so this is not vacuous
+    placed = 0
+    for chunk in hidden:
+        for line in chunk.splitlines():
+            stripped = line.lstrip()
+            if not stripped.startswith("viewof "):
+                continue
+            name = stripped.split()[1].split("=")[0].strip()
+            assert f"viewof {name}" in shown, f"{name} is defined hidden and never placed"
+            placed += 1
+    assert placed >= 1
+
+
 def test_no_plot_scheme_the_pinned_plot_build_does_not_know():
     # Quarto's OJS stdlib pins @observablehq/plot 0.6.11, whose ordinal schemes
     # do not include "observable10": naming it throws `unknown ordinal scheme`

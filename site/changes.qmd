@@ -17,7 +17,12 @@ pageWantsDb = true
 // station's previous OBSERVED reading, so the denominator is transitions we
 // actually saw -- never calendar days, which we did not always look at.
 changesWindowDays = 90
+```
 
+```{ojs}
+// Its own chunk, and NOT `output: false`: the control shared that flag with the
+// constant above it, so the drill-down existed in the DOM at zero by zero
+// pixels and no one could reach the per-station view behind it.
 viewof changesPlace = asField(
   Inputs.select(["All US states", ...changesStates], {
     label: "Drill into",
