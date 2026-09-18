@@ -167,11 +167,14 @@ html`<div class="cgp-controls-row">${[
 function coverageStrip(rows, {label}) {
   const byDay = new Map();
   for (const row of rows) {
-    const key = `${row.d} :: ${row.brand || ""}`;
-    byDay.set(key, {
+    // One point per series a day. Keyed on the day and the chain alone, each
+    // country's row overwrote the one before it, and the strip under a
+    // seven-country chart drew the United States and nothing else.
+    const series = seriesOf(row);
+    byDay.set(`${row.d} :: ${series}`, {
       day: toDay(row.d),
       brand: row.brand,
-      series: row.brand ? `${row.country}-${row.brand}` : row.country,
+      series,
       country: row.country,
       n: Number(row.n_stations) || 0
     });

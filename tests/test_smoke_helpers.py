@@ -23,10 +23,12 @@ from smoke_site import (  # noqa: E402
     contrast_ratio,
     currencies,
     doubles_back,
+    expected_country_series,
     expected_latest_stations,
     expected_marker_count,
     expected_usd_countries,
     fetches_history,
+    fewest_stations_state,
     freshness_cases,
     grade_table_problems,
     is_site_console_error,
@@ -216,6 +218,22 @@ def test_the_latest_day_count_adds_every_series(tmp_path: Path):
     assert expected_latest_stations(tmp_path / "summary_daily.parquet", "none") == 0
 
 
+def test_the_strip_draws_a_line_for_every_chain_in_every_country(tmp_path: Path):
+    # Two chains in the United States and one in each of six other countries.
+    build(tmp_path)
+    assert expected_country_series(tmp_path / "summary_daily.parquet", "regular") == 8
+    assert expected_country_series(tmp_path / "summary_daily.parquet", "none") == 0
+
+
+def test_the_smallest_state_is_the_one_with_fewest_stations_pricing_the_grade():
+    # Florida has two, and Texas one; Great Britain has no states.
+    assert fewest_stations_state(TWO_CHAINS, "regular") == "TX"
+    # A station that does not price the grade draws no row, so is not counted.
+    assert fewest_stations_state(TWO_CHAINS, "diesel") is None
+    florida_only = [s for s in TWO_CHAINS if s["region"] == "FL"]
+    assert fewest_stations_state(florida_only, "regular") == "FL"
+
+
 def test_a_date_axis_ticked_between_days_is_caught():
     # The Trends chart on the release's second day, as the audit read it.
     hourly = {"chart": "Median", "labels": ["12 AM Sep 17", "12 PM", "12 AM Sep 18"]}
@@ -402,9 +420,9 @@ def test_the_freshness_cases_name_the_stale_chain_where_the_country_has_two(tmp_
     build(tmp_path)
     meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
     stations = json.loads((tmp_path / "stations.json").read_text(encoding="utf-8"))
-    (_, per_feed, said), (_, per_country, said_by_country), (_, fresh, said_fresh) = (
-        freshness_cases(meta, stations, NOW)
-    )
+    cases = freshness_cases(meta, stations, NOW)
+    (_, per_feed, said), (_, per_country, said_by_country), (_, partial, said_partial) = cases[:3]
+    (_, fresh, said_fresh) = cases[3]
     assert said == "Last successful capture over 12 h ago: United States · Sam's Club (30 h)."
     assert per_feed["feeds"]["US-SAMS"]["last_success_capture_id"] == "2026-09-17T1030Z"
     assert per_feed["feeds"]["US-COSTCO"]["last_success_capture_id"] == "2026-09-18T1530Z"
@@ -416,6 +434,12 @@ def test_the_freshness_cases_name_the_stale_chain_where_the_country_has_two(tmp_
     assert "feeds" not in per_country
     assert per_country["countries"]["US"]["last_success_capture_id"] == "2026-09-17T1030Z"
     assert said_by_country == "Last successful capture over 12 h ago: United States (30 h)."
+    # A capture that skipped the United States lists none of its feeds, so its
+    # country block is read, and the other countries still by feed.
+    assert not any(feed_id.startswith("US-") for feed_id in partial["feeds"])
+    assert "CA-COSTCO" in partial["feeds"]
+    assert partial["countries"]["US"]["last_success_capture_id"] == "2026-09-17T1030Z"
+    assert said_partial == "Last successful capture over 12 h ago: United States (30 h)."
     assert "US-ELSEWHERE" in fresh["feeds"]
     assert said_fresh == "Every country was captured in the last 12 hours."
     for _, served, _ in freshness_cases(meta, stations, NOW):

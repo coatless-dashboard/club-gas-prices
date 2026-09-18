@@ -150,7 +150,7 @@ function changesBinned(rows, keyName) {
   }
   const cells = [...bins.values()].map((cell) => ({
     ...cell,
-    // Absent is not unchanged. A thin cell gets no colour rather than a
+    // Absent is not unchanged. A thin cell gets no color rather than a
     // confident 0%, because one observation is not a rate.
     rate: cell.n_obs >= 3 ? cell.n_changed / cell.n_obs : null
   }));
@@ -182,16 +182,22 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
       const [x, y] = [labelOf(a), labelOf(b)];
       return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
     });
+    // The day labels are turned 35 degrees, and a turned "2026-09-17" hangs
+    // about 50px below the axis: in Plot's default 30px gutter the bottom of
+    // every one was cut off.
+    const top = 28;
+    const bottom = 54;
+    // The height holds both margins and then a full pitch for every row. It
+    // was 24px short of the margins, so each row lost 24px shared among them,
+    // and a state with one station drew its one row 0px tall.
+    const pitch = chartWidth < 520 ? 11 : 16;
     return Plot.plot({
       width: chartWidth,
-      // The day labels are turned 35 degrees, and a turned "2026-09-17" hangs
-      // about 50px below the axis: in Plot's default 30px gutter the bottom of
-      // every one was cut off.
-      height: 58 + keys.length * (chartWidth < 520 ? 11 : 16),
+      height: top + bottom + keys.length * pitch,
       marginLeft: left,
       marginRight: 24,
-      marginTop: 28,
-      marginBottom: 54,
+      marginTop: top,
+      marginBottom: bottom,
       style: {background: "transparent", color: palette.text},
       x: {
         domain: binDomain,
@@ -207,7 +213,7 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
         Plot.cell(mine, {
           x: "bin",
           y: "key",
-          // A function fill gets an identity colour scale, so these follow
+          // A function fill gets an identity color scale, so these follow
           // Quarto's light/dark toggle the way the map's markers do.
           fill: (c) => (c.rate == null ? palette.missing : colorForFraction(c.rate, palette)),
           title: (c) =>

@@ -164,6 +164,10 @@ def test_the_freshness_notice_reads_each_feed_and_falls_back_to_countries():
     assert "shown.has(feed.brand)" in sources
     # Without feeds, the country block exactly as before.
     assert "const entry = meta.countries ? meta.countries[code] : null;" in sources
+    # And country by country, not all or nothing: a capture that skipped a
+    # country lists none of its feeds, and that country is read by its block.
+    assert "if (mine.length) continue;" in sources
+    assert "if (!feeds.length) {" not in sources
     notice = text.split("freshnessNotice = {", 1)[1].split("\n}\n", 1)[0]
     assert "for (const {label, captureId} of freshnessSources)" in notice
     assert "meta.countries" not in notice
@@ -323,8 +327,10 @@ def test_the_page_is_written_in_american_english():
         r"\b(colour\w*|dearer|dearest|grey|licence|behaviour\w*|centre|organis\w+)\b",
         re.IGNORECASE,
     )
+    # Every page and include, not the map's alone: the split into pages left
+    # the others unread, and "colour" sat in two of Changes' comments.
     for path in (
-        QMD,
+        *sorted(SITE.glob("*.qmd")),
         ROOT / "site" / "custom.scss",
         ROOT / "site" / "dark.scss",
         ROOT / "README.md",
@@ -718,8 +724,32 @@ def test_changes_rows_are_per_chain_and_keyed_on_the_station():
     assert "station_key: nameOf.get(" not in changes
 
 
+def test_every_changes_row_gets_its_full_pitch():
+    """The heatmap's height was 24px short of its two margins, so its rows
+    shared the shortfall: a state with one station drew that row 0px tall, and
+    a chain in two states got 4px a row."""
+    changes = (SITE / "changes.qmd").read_text(encoding="utf-8")
+    chart = changes.split("function changesChart(", 1)[1].split("\n}\n", 1)[0]
+    assert "height: top + bottom + keys.length * pitch," in chart
+    assert "marginTop: top," in chart
+    assert "marginBottom: bottom," in chart
+
+
+def test_the_coverage_strip_draws_every_series():
+    """Keyed on the day and the chain, each country's row overwrote the one
+    before it, and the strip under the seven-country chart drew the United
+    States alone while the note beside it counted every country."""
+    trends = (SITE / "trends.qmd").read_text(encoding="utf-8")
+    strip = trends.split("function coverageStrip(", 1)[1].split("\n}\n", 1)[0]
+    assert "const series = seriesOf(row);" in strip
+    assert "byDay.set(`${row.d} :: ${series}`, {" in strip
+    assert '${row.brand || ""}`' not in strip
+
+
 def css_color(text: str, token: str) -> str:
-    return re.search(rf"{token}:\s*(#[0-9a-fA-F]{{3,6}})\s*;", text).group(1)
+    match = re.search(rf"{token}:\s*(#[0-9a-fA-F]{{3,6}})\s*;", text)
+    assert match, f"no {token} token"
+    return match.group(1)
 
 
 def test_every_cluster_count_meets_aa_on_every_fill_in_both_themes():

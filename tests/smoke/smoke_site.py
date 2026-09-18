@@ -174,6 +174,27 @@ CHANGES_KEY_JS = """() => {
   };
 }"""
 
+# The shortest cell of each Changes heatmap. A chart too short for its own
+# margins shared the shortfall among its rows, and drew one row 0px tall.
+CHANGES_CELLS_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("aria-label") || "").includes("price moved, by"))
+  .map((svg) => ({
+    chart: svg.getAttribute("aria-label"),
+    heights: [...svg.querySelectorAll('g[aria-label="cell"] rect')]
+      .map((rect) => Number(rect.getAttribute("height")) || 0)
+  }))
+  .filter((chart) => chart.heights.length)
+  .map((chart) => ({chart: chart.chart, shortest: Math.min(...chart.heights)}))"""
+# A heatmap row is 16px apart on a desktop; this leaves room for the inset.
+MIN_CELL_PX = 8
+
+# How many lines the coverage strip under the Trends chart draws.
+STRIP_LINES_JS = """() => {
+  const svg = [...document.querySelectorAll("svg")]
+    .find((s) => (s.getAttribute("aria-label") || "").startsWith("Stations that posted"));
+  return svg ? svg.querySelectorAll('g[aria-label="line"] path').length : null;
+}"""
+
 # The x-axis tick labels of every Plot chart. Plot writes a two-line label as
 # two tspans, which are joined with a space so "12 AM" and "Sep 17" stay apart.
 X_TICKS_JS = """() => [...document.querySelectorAll("svg")]
@@ -280,7 +301,7 @@ def chains_by_country(latest: list[dict]) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for station in latest:
         if station.get("brand"):
-            out.setdefault(station.get("country"), set()).add(station["brand"])
+            out.setdefault(station["country"], set()).add(station["brand"])
     return out
 
 
@@ -323,6 +344,37 @@ def expected_latest_stations(summary_path: Path, grade: str) -> int:
     return int(rows.filter(pl.col("capture_date") == newest)["n_stations"].sum())
 
 
+def expected_country_series(summary_path: Path, grade: str) -> int:
+    """Series in the country-level summary for `grade`, each a chain in a country.
+
+    What the coverage strip under the all-countries Trends chart draws one line
+    for. Read from the summary, as the strip is, because a series can have days
+    there and no station in latest.json.
+    """
+    import polars as pl
+
+    rows = pl.read_parquet(summary_path).filter(
+        (pl.col("level") == "country") & (pl.col("grade") == grade)
+    )
+    return rows.select("country", "brand").unique().height
+
+
+def fewest_stations_state(latest: list[dict], grade: str) -> str | None:
+    """The US state with the fewest stations pricing `grade`, whose Changes
+    drill-down has the fewest rows to spread its height over; the first by name
+    on a tie. A station without the grade draws no row there, so it is not
+    counted, and a state of only those is never picked."""
+    counts: dict[str, int] = {}
+    for station in latest:
+        if not (station.get("grades") or {}).get(grade):
+            continue
+        if station.get("country") == "US" and station.get("region"):
+            counts[station["region"]] = counts.get(station["region"], 0) + 1
+    if not counts:
+        return None
+    return min(counts, key=lambda region: (counts[region], region))
+
+
 def fetches_history(urls: list[str]) -> bool:
     """Whether a page asked for history.parquet among `urls`."""
     return any(urlsplit(url).path.endswith("/data/history.parquet") for url in urls)
@@ -341,10 +393,11 @@ def freshness_cases(meta: dict, stations: list[dict], now: datetime) -> list[tup
     hour ago. The country block takes the newest success across a country's
     feeds, so it reads fresh; per feed, the notice names the country, and the
     chain too wherever the United States has two. Without `feeds` the page
-    reads the country block as it always has. A feed of a chain the data holds
-    no station of is never named, however stale: the site names no chain it
-    shows nothing of. The cases are built from the stations served, so a
-    one-chain release and the two-chain sample each get the labels their own
+    reads the country block as it always has, and so it does for a country
+    whose feeds a partial capture skipped and left out. A feed of a chain the
+    data holds no station of is never named, however stale: the site names no
+    chain it shows nothing of. The cases are built from the stations served, so
+    a one-chain release and the two-chain sample each get the labels their own
     page would draw.
     """
     window = meta.get("stale_after_hours") or 12
@@ -374,6 +427,9 @@ def freshness_cases(meta: dict, stations: list[dict], now: datetime) -> list[tup
     # A chain switched on in the collector that has yet to post a price.
     feeds[f"US-{absent}"] = feed("US", absent, None, status="failed")
     all_fresh = {**feeds, f"US-{late}": feed("US", late, fresh)}
+    # A capture run for the other countries only. The collector lists no feed
+    # it skipped, so the United States is left to its country block.
+    elsewhere = {f"{c}-{b}": feed(c, b, fresh) for c, b in pairs if c != "US"}
     built = {**meta, "built_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
     by_country = {key: value for key, value in built.items() if key != "feeds"}
 
@@ -390,6 +446,18 @@ def freshness_cases(meta: dict, stations: list[dict], now: datetime) -> list[tup
                     **countries,
                     "US": {**countries["US"], "last_success_capture_id": stale},
                 },
+            },
+            over.format("United States"),
+        ),
+        (
+            "a country with no feed listed",
+            {
+                **built,
+                "countries": {
+                    **countries,
+                    "US": {**countries["US"], "last_success_capture_id": stale},
+                },
+                "feeds": elsewhere,
             },
             over.format("United States"),
         ),
@@ -493,7 +561,7 @@ def grade_table_problems(
     problems = []
     if len(rows) != len(grades):
         problems.append(f"{len(rows)} rows for {len(grades)} grades in meta.json")
-    named = {row.get("brand") for row in grades if row.get("brand")}
+    named = {row["brand"] for row in grades if row.get("brand")}
     if "Chain" in head:
         column = head.index("Chain")
         blank = sum(1 for cells in rows if column >= len(cells) or not cells[column])
@@ -521,12 +589,14 @@ def parse_color(text: str) -> tuple[int, int, int] | None:
         digits = match.group(1)
         if len(digits) == 3:
             digits = "".join(c * 2 for c in digits)
-        return tuple(int(digits[i : i + 2], 16) for i in (0, 2, 4))
+        red, green, blue = (int(digits[i : i + 2], 16) for i in (0, 2, 4))
+        return red, green, blue
     match = re.fullmatch(r"rgba?\(([^)]*)\)", value)
     if match:
         parts = re.findall(r"[\d.]+", match.group(1))
         if len(parts) >= 3:
-            return tuple(round(float(p)) for p in parts[:3])
+            red, green, blue = (round(float(p)) for p in parts[:3])
+            return red, green, blue
     return None
 
 
@@ -791,7 +861,7 @@ def grade_table_check(page, failures: Failures, step: str, meta: dict, latest: l
     if table is None:
         failures.add(f"{step}: no grade table")
         return
-    chains = {station.get("brand") for station in latest if station.get("brand")}
+    chains = {station["brand"] for station in latest if station.get("brand")}
     problems = grade_table_problems(table["head"], table["rows"], meta.get("grades") or [], chains)
     for problem in problems:
         failures.add(f"{step}: grade table: {problem}")
@@ -867,6 +937,29 @@ def changes_key_check(page, failures: Failures, step: str) -> None:
         failures.add(f"{step}: the key does not say what the gray means: {key['text']!r}")
     else:
         print(f"{step}: ok, the key explains all {len(key['cells'])} cell colors", flush=True)
+
+
+def changes_cells_check(page, failures: Failures, step: str) -> None:
+    """Every row of every Changes heatmap is tall enough to see."""
+    charts = page.evaluate(CHANGES_CELLS_JS)
+    thin = [f"{c['chart']} ({c['shortest']:g}px)" for c in charts if c["shortest"] < MIN_CELL_PX]
+    if not charts:
+        failures.add(f"{step}: no heatmap cells to measure")
+    elif thin:
+        failures.add(f"{step}: rows under {MIN_CELL_PX}px tall in {thin}")
+    else:
+        print(f"{step}: ok, every row of {len(charts)} heatmap(s) can be seen", flush=True)
+
+
+def strip_check(page, failures: Failures, step: str, expected: int) -> None:
+    """The coverage strip under an all-countries chart has a line for every series."""
+    drawn = page.evaluate(STRIP_LINES_JS)
+    if drawn is None:
+        failures.add(f"{step}: no coverage strip under the chart")
+    elif drawn != expected:
+        failures.add(f"{step}: the coverage strip draws {drawn} of {expected} series")
+    else:
+        print(f"{step}: ok, the coverage strip draws all {expected} series", flush=True)
 
 
 def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures, collected):
@@ -1170,6 +1263,10 @@ def main() -> int:
             stations_on_latest_day = expected_latest_stations(
                 site_dir / "data" / "summary_daily.parquet", "regular"
             )
+            country_series = expected_country_series(
+                site_dir / "data" / "summary_daily.parquet", "regular"
+            )
+            smallest_state = fewest_stations_state(latest, "regular")
             for name in PAGES:
                 page_id = name.removesuffix(".html")
                 requested: list[str] = []
@@ -1187,8 +1284,21 @@ def main() -> int:
                 elif page_id == "trends":
                     plot_check(page, failures, "step 2 trends", TREND_MARKS, countries, "marks")
                     note_check(page, failures, "step 2 trends", stations_on_latest_day)
+                    strip_check(page, failures, "step 2 trends", country_series)
                 elif page_id == "changes":
                     changes_key_check(page, failures, "step 2 changes")
+                    changes_cells_check(page, failures, "step 2 changes")
+                    # The state with the fewest stations has the fewest rows to
+                    # share the chart's height, which is where a short one shows.
+                    if smallest_state:
+                        step = f"step 2 changes {smallest_state}"
+                        drill = page.locator("form", has_text="Drill into").locator("select")
+                        drill.select_option(label=smallest_state)
+                        page.wait_for_selector(
+                            'svg[aria-label*="by station"]', timeout=IDLE_TIMEOUT_MS
+                        )
+                        wait_idle(page, failures, step)
+                        changes_cells_check(page, failures, step)
                 elif page_id == "about":
                     grade_table_check(page, failures, "step 2 about", meta, latest)
                 chart_text_check(page, failures, f"step 2 {page_id}")

@@ -460,31 +460,34 @@ staleAfterHours = {
 // still read fresh. Where meta.json lists its feeds, each is checked on its
 // own and named the way every chart names a chain: by country, and by chain
 // too where the country has two. A feed of a chain the data holds no station
-// of is left out, because the site names no chain it shows nothing of. A
-// meta.json that lists no feeds is read by country, as it always was.
+// of is left out, because the site names no chain it shows nothing of.
+//
+// A country none of whose feeds is listed is read by its country block, as
+// every country is when meta.json lists no feeds at all. The collector leaves
+// out a feed the capture skipped, so a capture run for some countries only
+// listed the others' feeds nowhere, and the notice stopped checking them.
 freshnessSources = {
   const feeds = Object.values(meta.feeds || {});
-  if (!feeds.length) {
-    const sources = [];
-    for (const code of COUNTRY_ORDER) {
-      const entry = meta.countries ? meta.countries[code] : null;
-      if (!entry) continue;
-      sources.push({label: COUNTRY_NAMES[code], captureId: entry.last_success_capture_id});
-    }
-    return sources;
-  }
   const shown = new Set(stationsAll.map((station) => station.brand).filter(Boolean));
   const kept = feeds.filter((feed) => shown.has(feed.brand));
   const chains = chainsByCountry(kept);
-  return COUNTRY_ORDER.flatMap((code) =>
-    kept
+  const sources = [];
+  for (const code of COUNTRY_ORDER) {
+    const mine = kept
       .filter((feed) => feed.country === code)
-      .sort((a, b) => chainOrder(a.brand, b.brand))
-      .map((feed) => ({
+      .sort((a, b) => chainOrder(a.brand, b.brand));
+    for (const feed of mine) {
+      sources.push({
         label: seriesLabel(code, feed.brand, chains),
         captureId: feed.last_success_capture_id
-      }))
-  );
+      });
+    }
+    if (mine.length) continue;
+    const entry = meta.countries ? meta.countries[code] : null;
+    if (!entry) continue;
+    sources.push({label: COUNTRY_NAMES[code], captureId: entry.last_success_capture_id});
+  }
+  return sources;
 }
 ```
 
