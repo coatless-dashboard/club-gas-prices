@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,12 +16,16 @@ from smoke_site import (  # noqa: E402
     PAGES,
     area_turns,
     chains_by_country,
+    currencies,
     doubles_back,
     expected_latest_stations,
     expected_marker_count,
     expected_usd_countries,
+    grade_table_problems,
     is_site_console_error,
     path_points,
+    time_of_day_charts,
+    tip_units,
     usd_series,
 )
 
@@ -199,3 +204,66 @@ def test_the_latest_day_count_adds_every_series(tmp_path: Path):
     build(tmp_path)
     assert expected_latest_stations(tmp_path / "summary_daily.parquet", "regular") == 12
     assert expected_latest_stations(tmp_path / "summary_daily.parquet", "none") == 0
+
+
+def test_a_date_axis_ticked_between_days_is_caught():
+    # The Trends chart on the release's second day, as the audit read it.
+    hourly = {"chart": "Median", "labels": ["12 AM Sep 17", "12 PM", "12 AM Sep 18"]}
+    strip = {"chart": "Stations", "labels": ["12 AM Sep 17", "6 AM", "12 PM", "6 PM"]}
+    # Plot's own labels for day ticks, and for month ticks on a long history.
+    days = {"chart": "Change", "labels": ["17 Sep", "18"]}
+    months = {"chart": "Price", "labels": ["Oct 2026", "Nov", "Dec"]}
+    assert time_of_day_charts([hourly, strip, days, months]) == ["Median", "Stations"]
+    assert time_of_day_charts([{"chart": "Minutes", "labels": ["3:15", "3:30"]}]) == ["Minutes"]
+    assert time_of_day_charts([days, months]) == []
+
+
+def test_a_tip_says_which_currency_each_price_is_in():
+    # Plot separates a tip's lines with zero-width spaces.
+    before = "Taiwan · 2026-09-18\u200b0.0% since 2026-09-17\u200b113.562 local/gal that day"
+    after = "Taiwan · 2026-09-18\u200b0.0% since 2026-09-17\u200b30.000 TWD/L that day"
+    assert tip_units(before) == ["local"]
+    assert tip_units(after) == ["TWD"]
+    assert tip_units("Canada · 2026-09-18") == []
+
+
+def test_currencies_come_from_every_graded_price(tmp_path: Path):
+    build(tmp_path)
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert currencies(latest) == {"USD", "CAD", "MXN", "GBP", "AUD", "JPY", "TWD"}
+
+
+HEAD = ["Country", "Chain", "Source label", "Grade", "Spec", "Stated by"]
+
+
+def test_the_grade_table_names_each_rows_chain_or_has_no_chain_column():
+    with_brand = [{"country": "US", "brand": "COSTCO"}, {"country": "US", "brand": "SAMS"}]
+    without = [{"country": "US"}, {"country": "US"}]
+    named = [["United States", "Costco"], ["United States", "Sam's Club"]]
+    both = {"COSTCO", "SAMS"}
+    assert grade_table_problems(HEAD, named, with_brand, both) == []
+    # A meta.json from before `brand`: the column the live site drew blank.
+    blank = [["United States", ""], ["United States", ""]]
+    assert grade_table_problems(HEAD, blank, without, both) == [
+        "a Chain column, though no grade row says its chain",
+        "2 rows with a blank Chain cell",
+    ]
+    # The same rows with the column left out are fine.
+    no_chain = [h for h in HEAD if h != "Chain"]
+    assert grade_table_problems(no_chain, [["United States"]] * 2, without, both) == []
+    # Rows that say their chain have to be shown saying it.
+    assert grade_table_problems(no_chain, [["United States"]] * 2, with_brand, both) == [
+        "no Chain column, though the grade rows say their chain"
+    ]
+    # And every row is drawn.
+    assert grade_table_problems(HEAD, named[:1], with_brand, both) == [
+        "1 rows for 2 grades in meta.json"
+    ]
+
+
+def test_the_grade_table_names_no_chain_the_data_does_not_hold():
+    rows = [{"country": "US", "brand": "COSTCO"}, {"country": "US", "brand": "SAMS"}]
+    cells = [["United States", "Costco"], ["United States", "Sam's Club"]]
+    assert grade_table_problems(HEAD, cells, rows, {"COSTCO"}) == [
+        "it names ['SAMS'], which have no stations here"
+    ]

@@ -185,7 +185,7 @@ function coverageStrip(rows, {label}) {
     marginRight: 80,
     marginBottom: 22,
     style: {background: "transparent", color: palette.text},
-    x: {label: null, grid: false, ticks: 4},
+    x: {label: null, grid: false, ticks: dayTicks(data)},
     y: {label: "stations", grid: true, nice: true, ticks: 3},
     marks: [
       Plot.ruleY([0], {stroke: palette.text, strokeOpacity: 0.2}),
@@ -370,7 +370,9 @@ trendView = {
           price: row.value,
           anchorPrice: anchor.value,
           anchorDay: dayText(anchor.day),
-          unit: currency === "USD" ? "USD" : currencyOf.get(code) || "local",
+          // By the row's country: `code` is the series, which carries the
+          // chain as well, and currencyOf is keyed on the country alone.
+          unit: currency === "USD" ? "USD" : currencyOf.get(row.country) || "local",
           rebased
         });
       }
@@ -542,7 +544,7 @@ trendView = {
         height: 190,
         marginLeft: 52,
         style: {background: "transparent", color: palette.text},
-        x: {label: null, ticks: 4, grid: true},
+        x: {label: null, ticks: dayTicks(rows, 240), grid: true},
         y: {label: `${currencyOf.get(code) || ""} ${volumeShort}`, grid: true, nice: true},
         marks
       });

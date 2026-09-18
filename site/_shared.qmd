@@ -186,11 +186,14 @@ function withControls(href) {
   return url.pathname.split("/").pop() + url.search + url.hash;
 }
 
-// One tick per day. Given room, Plot subdivides a daily series into hours --
-// "12 AM Sep 2, 12 PM, 12 AM Sep 3" for data that only ever has one value a
-// day -- and the wider the page, the more of them. Capped so a long history
-// thins out instead of crowding.
-function dayTicks(rows) {
+// Ticks on days, never between them. Given a count, Plot splits a short daily
+// series into hours -- "12 AM Sep 17, 12 PM, 12 AM Sep 18" for data that only
+// ever has one value a day. So a history with fewer days than the chart has
+// room for ticks gets each of its days as a tick, which Plot labels as a day.
+// A longer one gets the count, which is then at most one tick a day, and Plot
+// picks round days, weeks or months. `room` is the chart's width, so a narrow
+// chart thins out instead of crowding.
+function dayTicks(rows, room = chartWidth) {
   const days = new Set(
     (rows || []).map((row) => {
       // Callers pass whatever they already have: a row, a Date, or the
@@ -200,7 +203,12 @@ function dayTicks(rows) {
       return d instanceof Date ? d.getTime() : d;
     })
   );
-  return Math.max(2, Math.min(days.size || 2, 14));
+  const times = [...days].filter(Number.isFinite).sort((a, b) => a - b);
+  const most = Math.max(2, Math.min(14, Math.floor(room / 80)));
+  if (!times.length) return most;
+  const span = Math.round((times[times.length - 1] - times[0]) / 864e5);
+  if (span >= most) return most;
+  return Array.from({length: span + 1}, (_, i) => new Date(times[0] + i * 864e5));
 }
 
 // A dashboard rewrote every Plot.plot call to inject the card's width. A site

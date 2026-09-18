@@ -3,7 +3,9 @@
 ```{ojs}
 // The notice comes from config/site.toml through meta.json: a shared prefix
 // followed by one clause per chain actually present in the capture, so a reader
-// is never disclaimed at about a chain this page cannot show them.
+// is never disclaimed at about a chain this page cannot show them. An issue is
+// the only route offered, because it is the only one that exists: the
+// repository publishes no contact address to point a chain at.
 siteFooter = {
   const repo = (meta.releases && meta.releases.all
     ? meta.releases.all.replace(/\/releases.*$/, "")
@@ -12,8 +14,7 @@ siteFooter = {
     ${(Array.isArray(meta.notice) ? meta.notice : [meta.notice])
       .map((line) => html`<p class="cgp-footer-notice">${line}</p>`)}
     <p class="cgp-footer-notice">Represent one of these chains and want something changed or
-      removed? <a href=${repo + "/issues/new"}>Open an issue</a> or write to the address in the
-      <a href=${repo + "/blob/main/README.md"}>repository</a>.</p>
+      removed? <a href=${repo + "/issues/new"}>Open an issue</a> on GitHub.</p>
   </div>`;
 }
 ```

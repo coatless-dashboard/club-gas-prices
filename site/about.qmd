@@ -27,10 +27,12 @@ aboutHeader = html`<div>
 </div>`
 ```
 
-Prices are read from each chain's own public website every four hours while a
-station is open, and stored by UTC day. Every row keeps the published value, its
-unit, and the exchange rate in force when it was collected, so a past day shows
-the USD value of that day.
+Prices are read from each chain's own public website four times a day on a fixed
+UTC schedule, though GitHub often starts a run hours late, and from every station
+whether or not it is open at the time. Every reading is kept in the release, and
+the charts use each station's last reading of each UTC day. Every row keeps the
+published value, its unit, and the exchange rate in force when it was collected,
+so a past day shows the USD value of that day.
 
 | Country | Endpoint, one request unless noted |
 |---|---|
@@ -48,32 +50,39 @@ the USD value of that day.
 ::: {.cgp-panel}
 
 ```{ojs}
-aboutGrades = html`<table class="cgp-table">
-  <thead><tr><th>Country</th><th>Chain</th><th>Source label</th><th>Grade</th>
-    <th>Spec</th><th>Stated by</th></tr></thead>
-  <tbody>${(meta.grades || []).map(
-    (row) => html`<tr>
-      <td>${COUNTRY_NAMES[row.country] || row.country}</td>
-      <td>${BRAND_NAMES[row.brand] || row.brand || ""}</td>
-      <td>${row.grade_raw}</td>
-      <td>${row.grade}</td>
-      <td>${row.spec || "—"}</td>
-      <td>${
-        row.spec_source
-          ? row.spec_source_url
-            ? html`<a href=${row.spec_source_url}>${row.spec_source}</a>`
-            : row.spec_source
-          : "—"
-      }</td>
-    </tr>`
-  )}</tbody>
-</table>`
+// The chain comes from each row's brand. A meta.json written before the
+// collector carried one has none at all, and a column of blank cells says
+// nothing, so the column is left out until the rows can fill it.
+aboutGrades = {
+  const rows = meta.grades || [];
+  const withChain = rows.some((row) => row.brand);
+  return html`<table class="cgp-table">
+    <thead><tr><th>Country</th>${withChain ? html`<th>Chain</th>` : ""}<th>Source label</th>
+      <th>Grade</th><th>Spec</th><th>Stated by</th></tr></thead>
+    <tbody>${rows.map(
+      (row) => html`<tr>
+        <td>${COUNTRY_NAMES[row.country] || row.country}</td>
+        ${withChain ? html`<td>${BRAND_NAMES[row.brand] || row.brand || "—"}</td>` : ""}
+        <td>${row.grade_raw}</td>
+        <td>${row.grade}</td>
+        <td>${row.spec || "—"}</td>
+        <td>${
+          row.spec_source
+            ? row.spec_source_url
+              ? html`<a href=${row.spec_source_url}>${row.spec_source}</a>`
+              : row.spec_source
+            : "—"
+        }</td>
+      </tr>`
+    )}</tbody>
+  </table>`;
+}
 ```
 
 Grades are not equivalent across countries. UK and Australian diesel is premium
-diesel, and these are one chain's posted prices, not national averages. Where a
-source states no octane or blend the specification is blank; where it comes from
-a third party it is marked `reported` and links to that source.
+diesel, and these are each chain's own posted prices, not national averages.
+Where a source states no octane or blend the specification is blank; where it
+comes from a third party it is marked `reported` and links to that source.
 
 :::
 
@@ -111,8 +120,8 @@ Australia the last capture of a UTC day arrives early the next local morning, so
 `local_date` in the released rows can be a day ahead of `capture_date`.
 
 **Known limits.** No source publishes a price timestamp, prices change during
-the day, and the storefront APIs declare CDN caching of up to 90 minutes. Costco
-prices are not national averages.
+the day, and the storefront APIs declare CDN caching of up to 90 minutes. A
+chain's posted price is not a national average.
 
 :::
 
@@ -128,7 +137,7 @@ aboutAttribution = {
 ```
 
 Code is MIT licensed. The data files carry no license claim and include the
-notice above.
+notice at the foot of this page.
 
 :::
 

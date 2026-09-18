@@ -476,16 +476,69 @@ def test_the_notice_and_a_route_for_rights_holders_are_in_the_footer():
     assert "one of these chains" in footer
     # A takedown is offered, in whatever words.
     assert "removed" in footer
+    # By an issue, and by nothing else: the footer told chains to write to an
+    # address in the repository, and the repository publishes none.
+    body = footer.split("siteFooter = {", 1)[1]
+    assert '"/issues/new"' in body
+    assert "address" not in body
+    assert "README" not in body
     for name in PAGES:
         assert "{{< include _footer.qmd >}}" in (SITE / name).read_text(encoding="utf-8"), name
 
 
 def test_a_daily_series_gets_daily_ticks():
-    """Given room, Plot subdivides a daily series into hours -- and the wider the
-    page, the more of them."""
+    """Given a count, Plot split a short daily series into hours: "12 AM Sep 17,
+    12 PM, 12 AM Sep 18" on the release's second day, and the wider the page,
+    the more of them. A history shorter than the count gets its days as the
+    ticks themselves."""
     text = read_qmd()
-    assert "function dayTicks(rows)" in text
-    assert text.count("ticks: dayTicks(") >= 5
+    body = text.split("function dayTicks(rows, room = chartWidth) {", 1)[1].split("\n}\n", 1)[0]
+    assert "new Date(times[0] + i * 864e5)" in body
+    # Every date axis goes through it. The coverage strip and the small
+    # multiples each took a bare `ticks: 4`, and drew six-hour ticks.
+    axes = 0
+    for name in ("trends.qmd", "station.qmd"):
+        page = (SITE / name).read_text(encoding="utf-8")
+        for axis in re.findall(r"\bx: \{([^}]*)\}", page):
+            assert "ticks: dayTicks(" in axis, f"{name}: {axis}"
+            axes += 1
+    assert axes >= 7  # the pattern finds the axes, so the loop is not vacuous
+    strip = text.split("function coverageStrip(", 1)[1].split("\n}\n", 1)[0]
+    assert "ticks: dayTicks(data)" in strip
+
+
+def test_the_change_tip_looks_the_currency_up_by_country():
+    """currencyOf is keyed on the country. The change view keys its series on the
+    country and the chain, and looked the currency up by that, so every tip in
+    local currency quoted its prices in "local"."""
+    trends = (SITE / "trends.qmd").read_text(encoding="utf-8")
+    change = trends.split("function allCountriesChange() {", 1)[1].split("\n  function ", 1)[0]
+    assert "currencyOf.get(row.country)" in change
+    assert "currencyOf.get(code)" not in change
+
+
+def test_the_about_page_describes_the_schedule_the_collector_runs():
+    """The collector's cron is `17 */6 * * *`: four captures a day at fixed UTC
+    times, every station read whether or not it is open, every reading kept. The
+    page said every four hours while a station is open, and the collector has
+    never worked that way."""
+    # The prose wraps, so it is read as one line.
+    about = " ".join((SITE / "about.qmd").read_text(encoding="utf-8").split())
+    assert "four times a day" in about
+    assert "whether or not it is open" in about
+    assert "every four hours" not in about
+    assert "while a station is open" not in about
+
+
+def test_the_grade_table_leaves_out_a_chain_column_it_cannot_fill():
+    """A meta.json written before the collector carried `brand` drew a Chain
+    column of blank cells on every row. The sample has a brand on every row, so
+    a smoke run against it cannot see this."""
+    about = (SITE / "about.qmd").read_text(encoding="utf-8")
+    table = about.split("aboutGrades = {", 1)[1].split("\n}\n", 1)[0]
+    assert "const withChain = rows.some((row) => row.brand);" in table
+    assert "withChain ? html`<th>Chain</th>`" in table
+    assert 'row.brand || ""' not in table
 
 
 def test_summary_queries_carry_brand_so_two_chains_cannot_pool():

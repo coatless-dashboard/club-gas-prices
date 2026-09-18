@@ -116,7 +116,8 @@ stationChart = {
       domain: ["regular", "premium", "diesel"],
       range: [palette.ramp[0], palette.ramp[3], palette.ramp[2]]
     },
-    x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(own.concat(medians))},
+    // The neighbours are drawn too, so they are part of the span the ticks cover.
+    x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(own.concat(medians, neighbours))},
     y: {label: `${unit} ${volumeLabel}`, grid: true, nice: true},
     marks: [
       Plot.line(neighbours, {

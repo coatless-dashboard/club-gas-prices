@@ -75,6 +75,32 @@ CLIPPED_LABELS_JS = """() => [...document.querySelectorAll("svg")]
       .map((text) => text.textContent);
   })"""
 
+# The x-axis tick labels of every Plot chart. Plot writes a two-line label as
+# two tspans, which are joined with a space so "12 AM" and "Sep 17" stay apart.
+X_TICKS_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"))
+  .map((svg) => ({
+    chart: svg.getAttribute("aria-label") || "",
+    labels: [...svg.querySelectorAll('g[aria-label="x-axis tick label"] text')].map((text) => {
+      const lines = [...text.querySelectorAll("tspan")].map((span) => span.textContent);
+      return lines.length ? lines.join(" ") : text.textContent;
+    })
+  }))"""
+
+# The About page's grade table: its header and each row's cells.
+GRADE_TABLE_JS = """() => {
+  const table = document.querySelector("table.cgp-table");
+  if (!table) return null;
+  return {
+    head: [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim()),
+    rows: [...table.querySelectorAll("tbody tr")].map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent.trim()))
+  };
+}"""
+
+# A tick label that names a time of day: "12 AM", "6 PM", "3:15".
+TIME_OF_DAY = re.compile(r"\b\d{1,2}(?::\d{2})? ?[AP]M\b|\b\d{1,2}:\d{2}\b")
+
 TILE_HOSTS = ("basemaps.cartocdn.com", "tile.openstreetmap.org")
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 # The page's libraries come from these two, so they are never intercepted.
@@ -236,6 +262,63 @@ def area_turns(d: str) -> int:
             turns += 1
         heading = step or heading
     return turns
+
+
+def time_of_day_charts(charts: list[dict]) -> list[str]:
+    """The charts whose date axis is ticked at times of day.
+
+    Every series on the site holds one value per UTC day, so a tick between two
+    days marks a reading nobody took. Given a tick count, Plot put them on any
+    history short enough for the count to split a day: "12 AM Sep 17, 12 PM".
+    """
+    return sorted(
+        chart["chart"]
+        for chart in charts
+        if any(TIME_OF_DAY.search(label) for label in chart["labels"])
+    )
+
+
+def tip_units(text: str) -> list[str]:
+    """The unit each price in a tip is quoted in: "3.764 USD/gal" gives "USD"."""
+    return re.findall(r"\d ([^\s\d/]+)/(?:gal|L)\b", text)
+
+
+def currencies(latest: list[dict]) -> set[str]:
+    """Every currency a station in `latest.json` posts a price in."""
+    return {
+        entry["currency"]
+        for station in latest
+        for entry in (station.get("grades") or {}).values()
+        if entry.get("currency")
+    }
+
+
+def grade_table_problems(
+    head: list[str], rows: list[list[str]], grades: list[dict], chains: set[str]
+) -> list[str]:
+    """What is wrong with the About page's grade table, given meta.json's rows.
+
+    One row per grade, and a Chain column exactly when the rows say whose label
+    each one is: without `brand` the column was a stack of blank cells that
+    named nothing. A chain the table names must also be one the data holds,
+    because the site names no chain it shows no prices for.
+    """
+    problems = []
+    if len(rows) != len(grades):
+        problems.append(f"{len(rows)} rows for {len(grades)} grades in meta.json")
+    named = {row.get("brand") for row in grades if row.get("brand")}
+    if "Chain" in head:
+        column = head.index("Chain")
+        blank = sum(1 for cells in rows if column >= len(cells) or not cells[column])
+        if not named:
+            problems.append("a Chain column, though no grade row says its chain")
+        if blank:
+            problems.append(f"{blank} rows with a blank Chain cell")
+    elif named:
+        problems.append("no Chain column, though the grade rows say their chain")
+    if named - chains:
+        problems.append(f"it names {sorted(named - chains)}, which have no stations here")
+    return problems
 
 
 def is_site_console_error(message_type: str, location_url: str, origin: str) -> bool:
@@ -420,6 +503,68 @@ def series_check(page, failures: Failures, step: str) -> None:
         print(f"{step}: ok, {len(paths)} lines and bands, each one series", flush=True)
 
 
+def day_ticks_check(page, failures: Failures, step: str) -> None:
+    """Every chart on the page with a date axis ticks it in days."""
+    charts = page.evaluate(X_TICKS_JS)
+    hourly = time_of_day_charts(charts)
+    if not charts:
+        failures.add(f"{step}: no charts to read the ticks of")
+    elif hourly:
+        failures.add(f"{step}: ticks at times of day in {hourly}")
+    else:
+        print(f"{step}: ok, {len(charts)} charts ticked in days", flush=True)
+
+
+def change_tip_check(page, failures: Failures, step: str, known: set[str]) -> None:
+    """In its own currency, the change view quotes each price in that currency.
+
+    The tip looked the currency up by the series key, a country and a chain, in
+    a map keyed on the country alone, so every tip said "local".
+    """
+    spot = page.evaluate(
+        """() => {
+          const svg = [...document.querySelectorAll("svg")]
+            .find((s) => s.getBoundingClientRect().width > 100
+                         && s.querySelector("g[aria-label='dot'] circle"));
+          if (!svg) return null;
+          const dots = [...svg.querySelectorAll("g[aria-label='dot'] circle")];
+          const dot = dots[Math.floor(dots.length / 2)];
+          dot.scrollIntoView({block: "center"});
+          const r = dot.getBoundingClientRect();
+          return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+        }"""
+    )
+    if not spot:
+        failures.add(f"{step}: no change chart to hover")
+        return
+    page.mouse.move(spot["x"], spot["y"])
+    page.wait_for_timeout(700)
+    text = page.evaluate(
+        """() => [...document.querySelectorAll("g[aria-label='tip']")]
+             .map((g) => g.textContent.trim()).filter(Boolean).join(" ")"""
+    )
+    units = tip_units(text)
+    if not units:
+        failures.add(f"{step}: the change tip quotes no price: {text[:120]!r}")
+    elif not set(units) <= known:
+        failures.add(f"{step}: the change tip quotes prices in {sorted(set(units))}")
+    else:
+        print(f"{step}: ok, the change tip quotes prices in {units[0]}", flush=True)
+
+
+def grade_table_check(page, failures: Failures, step: str, meta: dict, latest: list[dict]):
+    table = page.evaluate(GRADE_TABLE_JS)
+    if table is None:
+        failures.add(f"{step}: no grade table")
+        return
+    chains = {station.get("brand") for station in latest if station.get("brand")}
+    problems = grade_table_problems(table["head"], table["rows"], meta.get("grades") or [], chains)
+    for problem in problems:
+        failures.add(f"{step}: grade table: {problem}")
+    if not problems:
+        print(f"{step}: ok, grade table has {len(table['rows'])} rows", flush=True)
+
+
 def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures, collected):
     """Two chains in one country are two series on every page.
 
@@ -533,6 +678,7 @@ def main() -> int:
     latest = json.loads((site_dir / "data" / "latest.json").read_text(encoding="utf-8"))
     if not latest:
         raise SystemExit(f"{site_dir}/data/latest.json has no stations")
+    meta = json.loads((site_dir / "data" / "meta.json").read_text(encoding="utf-8"))
     first_key = latest[0]["station_key"]
 
     # Served the way Pages serves: gzipped, with ranges over the compressed
@@ -592,6 +738,8 @@ def main() -> int:
                 elif page_id == "trends":
                     plot_check(page, failures, "step 2 trends", TREND_MARKS, countries, "marks")
                     note_check(page, failures, "step 2 trends", stations_on_latest_day)
+                elif page_id == "about":
+                    grade_table_check(page, failures, "step 2 about", meta, latest)
                 check_clean(page, failures, f"step 2 {page_id}", collected)
 
             # Step 2c: hovering a chart has to raise a tip. The tip mark is easy
@@ -641,6 +789,19 @@ def main() -> int:
                 else:
                     print(f"step 2c {page_id}: tip reads {text.splitlines()[0][:40]!r}", flush=True)
                 check_clean(page, failures, f"step 2c {page_id}", collected)
+
+            # Step 2d: every Trends view ticks its dates in days, the coverage
+            # strip under it included. A short history is where this breaks,
+            # so the release's own data catches what the long sample cannot.
+            # The change view in local currency also has to name each currency.
+            for view in ("", "?view=change&cur=Local", "?view=separate&cur=Local"):
+                step = f"step 2d trends{view}"
+                page.goto(base_url + "trends.html" + view, wait_until="load")
+                wait_idle(page, failures, step)
+                day_ticks_check(page, failures, step)
+                if "change" in view:
+                    change_tip_check(page, failures, step, currencies(latest))
+                check_clean(page, failures, step, collected)
 
             # Step 3: exercise every control value, then re-check the Map.
             for name, values in (("grade", GRADES), ("currency", CURRENCIES), ("volume", VOLUMES)):
@@ -745,6 +906,7 @@ def main() -> int:
                     failures.add("step 4: hovering the station chart raised no tip")
                 else:
                     print(f"step 4: chart tip reads {tip.splitlines()[0][:36]!r}", flush=True)
+            day_ticks_check(page, failures, "step 4")
             panel = page.locator("body").inner_text()
             if "USD" not in panel:
                 failures.add("step 4: the station panel never mentions the USD conversion")

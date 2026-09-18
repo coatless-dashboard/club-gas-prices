@@ -10,6 +10,8 @@ locally.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -172,35 +174,74 @@ STATIONS = [
     },
 ]
 
-GRADE_TABLE = [
-    {"brand": "SAMS", "country": "US", "grade_raw": "UNLEAD", "grade": "regular", "priority": 1,
-     "label": "Regular", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"brand": "SAMS", "country": "US", "grade_raw": "PREMIUM", "grade": "premium", "priority": 1,
-     "label": "Premium", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"brand": "COSTCO", "country": "US", "grade_raw": "regular", "grade": "regular", "priority": 1,
-     "label": "Regular", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"brand": "COSTCO", "country": "US", "grade_raw": "clear", "grade": "other", "priority": 1,
-     "label": "Clear diesel", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"brand": "COSTCO", "country": "CA", "grade_raw": "regular", "grade": "regular", "priority": 1,
-     "label": "Regular", "spec": "", "spec_source": "", "spec_source_url": ""},
-    {"brand": "COSTCO", "country": "MX", "grade_raw": "Regular", "grade": "regular", "priority": 1,
-     "label": "Regular", "spec": "Octane index ([RON+MON]/2) at least 87",
-     "spec_source": "reported", "spec_source_url": "https://api-reportediario.cne.gob.mx/"},
-    {"brand": "COSTCO", "country": "GB", "grade_raw": "5301", "grade": "regular", "priority": 1,
-     "label": "Unleaded Petrol", "spec": "E10", "spec_source": "source",
-     "spec_source_url": "https://www.costco.co.uk/i18n/chunk/en_GB?basename=gas"},
-    {"brand": "COSTCO", "country": "GB", "grade_raw": "5303", "grade": "diesel", "priority": 1,
-     "label": "Premium Diesel", "spec": "B7", "spec_source": "reported",
-     "spec_source_url": "https://www.gov.uk/guidance/access-fuel-price-data"},
-    {"brand": "COSTCO", "country": "AU", "grade_raw": "E10", "grade": "regular", "priority": 1,
-     "label": "E10", "spec": "94 RON, 10% ethanol", "spec_source": "source",
-     "spec_source_url": ""},
-    {"brand": "COSTCO", "country": "JP", "grade_raw": "Kerosene", "grade": "other", "priority": 1,
-     "label": "Kerosene", "spec": "Heating fuel", "spec_source": "", "spec_source_url": ""},
-    {"brand": "COSTCO", "country": "TW", "grade_raw": "95", "grade": "regular", "priority": 1,
-     "label": "95", "spec": "95 RON", "spec_source": "source", "spec_source_url": ""},
-]
 # fmt: on
+
+# config/grades.csv in the data repository, as it stands on 2026-09-18. The
+# About page draws its grade table from these rows, so the sample carries the
+# real labels and specifications rather than a shorter invented set.
+GRADES_CSV = """\
+brand,country,grade_raw,grade,priority,label,spec,spec_source,spec_source_url
+COSTCO,US,regular,regular,1,Regular,,,
+COSTCO,US,premium,premium,1,Premium,,,
+COSTCO,US,diesel,diesel,1,Diesel,,,
+COSTCO,US,clear,other,1,Clear,,,
+COSTCO,CA,regular,regular,1,Regular,,,
+COSTCO,CA,premium,premium,1,Premium,,,
+COSTCO,CA,diesel,diesel,1,Diesel,,,
+COSTCO,MX,Regular,regular,1,Regular,Octane index ([RON+MON]/2) at least 87,reported,https://api-reportediario.cne.gob.mx/api/EstacionServicio/Petroliferos
+COSTCO,MX,Premium,premium,1,Premium,,,
+COSTCO,GB,5301,regular,1,Unleaded Petrol,E10,reported,https://www.fuel-finder.uk/costco-fuel-prices
+COSTCO,GB,5302,premium,1,Premium Unleaded Petrol,E5 97,reported,https://www.fuel-finder.uk/costco-fuel-prices
+COSTCO,GB,5303,diesel,1,Premium Diesel,B7,reported,https://www.fuel-finder.uk/costco-fuel-prices
+COSTCO,AU,Unleaded 91,regular,2,Unleaded 91,91 RON,source,
+COSTCO,AU,E10,regular,1,E10,10% ethanol blend,source,
+COSTCO,AU,Premium 98,premium,1,Premium 98,98 RON,source,
+COSTCO,AU,Diesel,diesel,1,Diesel,Premium diesel,reported,https://www.fuelcheck.nsw.gov.au/fuel/api/v1/fuel/refData
+COSTCO,JP,Regular,regular,1,Regular,,,
+COSTCO,JP,Premium,premium,1,Premium,,,
+COSTCO,JP,Diesel,diesel,1,Diesel,,,
+COSTCO,JP,Kerosene,other,1,Kerosene,,,
+COSTCO,TW,95,regular,1,95,95 RON,source,
+COSTCO,TW,98,premium,1,98,98 RON,source,
+COSTCO,TW,Diesel,diesel,1,Diesel,,,
+SAMS,US,UNLEAD,regular,1,Regular,,,
+SAMS,US,PREMIUM,premium,1,Premium,,,
+SAMS,US,DIESEL,diesel,1,Diesel,,,
+SAMS,US,MIDGRAD,other,1,Mid-Grade,,,
+SAMS,US,MID CLR,other,1,Mid-Grade (clear),,,
+SAMS,US,PREM CLR,other,1,Premium (clear),,,
+"""
+
+# Kept in step with club_gas.sitedata.GRADE_TABLE_FIELDS, in its order: the
+# fields of meta.json's `grades` rows. `brand` is what the About page names the
+# chain from.
+GRADE_TABLE_FIELDS = (
+    "country",
+    "brand",
+    "grade_raw",
+    "grade",
+    "priority",
+    "label",
+    "spec",
+    "spec_source",
+    "spec_source_url",
+)
+
+
+def grade_table(brands: set[str]) -> list[dict]:
+    """meta.json's `grades`: the chains in the data only, as sitedata writes them.
+
+    The site names no chain it holds no prices for, so a chain whose feed is off
+    has no rows here even though config/grades.csv lists its labels.
+    """
+    rows = []
+    for entry in csv.DictReader(io.StringIO(GRADES_CSV)):
+        if entry["brand"] not in brands:
+            continue
+        row = {field: entry[field] for field in GRADE_TABLE_FIELDS}
+        row["priority"] = int(row["priority"])
+        rows.append(row)
+    return rows
 
 
 def parse_price(raw: str) -> float:
@@ -386,7 +427,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
             station["country"]: {"last_success_capture_id": "2026-09-15T1817Z", "status": "ok"}
             for station in STATIONS
         },
-        "grades": GRADE_TABLE,
+        "grades": grade_table({station["brand"] for station in STATIONS}),
         "releases": {
             "current": ("https://github.com/coatless-data/club-gas-prices/releases/tag/current"),
             "all": "https://github.com/coatless-data/club-gas-prices/releases",
