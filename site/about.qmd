@@ -28,12 +28,11 @@ aboutHeader = html`<div>
 </div>`
 ```
 
-Prices are read from each chain's own public website four times a day on a fixed
-UTC schedule, though GitHub often starts a run hours late, and from every station
-whether or not it is open at the time. Every reading is kept in the release, and
-the charts use each station's last reading of each UTC day. Every row keeps the
-published value, its unit, and the exchange rate in force when it was collected,
-so a past day shows the USD value of that day.
+Prices are read from each chain's public website for every station four times a
+day, open or not; runs can start a few hours late. Every reading is kept, and the
+charts use each station's last reading of each UTC day. Each row keeps the
+published value, its unit and the exchange rate of the day it was read, so a past
+day shows that day's USD value.
 
 | Country | Endpoint, one request unless noted |
 |---|---|

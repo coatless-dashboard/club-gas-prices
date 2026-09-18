@@ -586,7 +586,7 @@ def test_the_about_page_describes_the_schedule_the_collector_runs():
     # The prose wraps, so it is read as one line.
     about = " ".join((SITE / "about.qmd").read_text(encoding="utf-8").split())
     assert "four times a day" in about
-    assert "whether or not it is open" in about
+    assert "every station four times a day, open or not" in about
     assert "every four hours" not in about
     assert "while a station is open" not in about
 
