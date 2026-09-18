@@ -213,8 +213,34 @@ function dayTicks(rows, room = chartWidth) {
 
 // A dashboard rewrote every Plot.plot call to inject the card's width. A site
 // does not, and a chart that says nothing falls to Plot's 640px default and
-// stops being responsive. `width` is the OJS builtin that tracks the page.
-chartWidth = Math.max(320, Math.min(width - 48, 1600))
+// stops being responsive.
+//
+// Nor is the OJS `width` builtin the measure. Quarto takes it from <main>, and
+// a custom page layout has none, so it falls back to the body: the whole
+// window. The page is held to a narrower measure than that, and a chart drawn
+// to the window's width was shrunk to fit the page -- at 1440px every label
+// came out at 78% of its size, under 8px. This reads the box the charts sit in.
+contentWidth = Generators.observe((notify) => {
+  const el = document.getElementById("quarto-content") || document.body;
+  const read = () => {
+    const style = getComputedStyle(el);
+    return Math.floor(
+      el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+    );
+  };
+  let current = read();
+  notify(current);
+  const observer = new ResizeObserver(() => {
+    const next = read();
+    if (next === current) return;
+    current = next;
+    notify(next);
+  });
+  observer.observe(el);
+  return () => observer.disconnect();
+})
+
+chartWidth = Math.max(320, Math.min(contentWidth, 1600))
 
 function radioControl(name, entries, value, label) {
   const keys = entries.map((entry) => entry[1]);
@@ -619,6 +645,28 @@ function latestStationCount(rows, series) {
   return total;
 }
 
+// Where the label at the end of each line goes, and how it reads. The labels
+// sat centered 14px past each line's last point, so "United Kingdom" was
+// struck through by its own line and "United States · Sam's Club" ran off the
+// chart and was cut off. They start just past the point now, in a right margin
+// sized to the longest one at about 5.2px a character of Plot's 10px type. A
+// quarter of the chart is the most that margin may take, so a phone keeps its
+// plot; a label too long for that puts its chain on a line under its place,
+// and anything still too long wraps to what the margin holds.
+function endLabelSpace(labels) {
+  const room = Math.floor(chartWidth / 4);
+  const width = (texts) => Math.ceil(14 + 5.2 * Math.max(0, ...texts.map((s) => s.length)));
+  const oneLine = width(labels);
+  const split = oneLine > room;
+  const needed = split ? width(labels.flatMap((s) => s.split(" · "))) : oneLine;
+  const marginRight = Math.max(60, Math.min(room, needed));
+  return {
+    marginRight,
+    lineWidth: (marginRight - 8) / 10,
+    text: (label) => (split ? label.split(" · ").join("\n") : label)
+  };
+}
+
 // What the chart covers, said once rather than hovered for.
 function coverageNote(days, from, to, stations) {
   const span = `${days} day${days === 1 ? "" : "s"}, ${from} to ${to}`;
@@ -911,9 +959,45 @@ function clusterIcon(el, cluster) {
     className: "cgp-cluster",
     iconSize: [size, size],
     html:
-      `<span style="background:${fill};border-color:${pal.stroke}">` +
+      `<span style="background:${fill};border-color:${pal.stroke};color:${inkOn(fill)}">` +
       `${count}</span>`
   });
+}
+
+// The count on a cluster is small text on whichever ramp step the group's
+// median lands on. It was white on every step, which fails WCAG AA's 4.5:1 on
+// most of them -- 1.7:1 on the amber, the step most groups land on -- so the
+// ink is whichever of these two stands out more from this fill. Every step of
+// both themes' ramps, and the gray, clears 4.5:1 one way or the other.
+CLUSTER_INKS = ["#ffffff", "#111418"]
+
+// WCAG 2's relative luminance of a "#rgb", "#rrggbb" or "rgb(…)" color.
+function relativeLuminance(color) {
+  const text = String(color).trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(text);
+  const channels = hex
+    ? (hex[1].length === 3 ? [...hex[1]].map((c) => c + c) : hex[1].match(/../g)).map((h) =>
+        parseInt(h, 16)
+      )
+    : (text.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+  if (channels.length !== 3) return null;
+  const [r, g, b] = channels.map((value) => {
+    const c = value / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(a, b) {
+  const [la, lb] = [relativeLuminance(a), relativeLuminance(b)];
+  if (la == null || lb == null) return 1;
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+function inkOn(fill) {
+  return CLUSTER_INKS.reduce((best, ink) =>
+    contrastRatio(ink, fill) > contrastRatio(best, fill) ? ink : best
+  );
 }
 
 // A graduated symbol: costlier stations draw larger, and every symbol grows with

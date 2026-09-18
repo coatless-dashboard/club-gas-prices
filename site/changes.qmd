@@ -182,10 +182,14 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
     });
     return Plot.plot({
       width: chartWidth,
-      height: 34 + keys.length * (chartWidth < 520 ? 11 : 16),
+      // The day labels are turned 35 degrees, and a turned "2026-09-17" hangs
+      // about 50px below the axis: in Plot's default 30px gutter the bottom of
+      // every one was cut off.
+      height: 58 + keys.length * (chartWidth < 520 ? 11 : 16),
       marginLeft: left,
       marginRight: 24,
       marginTop: 28,
+      marginBottom: 54,
       style: {background: "transparent", color: palette.text},
       x: {
         domain: binDomain,
@@ -240,7 +244,25 @@ changesFigure = {
     labelOf: drilled ? (key) => nameOf.get(key) || key : undefined
   });
   if (!charts) return html`<div class="cgp-notice">Not enough readings yet.</div>`;
-  return html`<div>${changesSummary}${charts}</div>`;
+  return html`<div>${changesKeyEl()}${changesSummary}${charts}</div>`;
+}
+
+// What a cell's color means. The fill is a function, so Plot draws no legend
+// of its own, and a cell's numbers are in a tooltip that a touch screen or a
+// keyboard never raises: the blue, amber, red and gray were explained nowhere
+// on the page. The swatches are the very colors the cells are drawn in, in
+// either theme.
+function changesKeyEl() {
+  return html`<div class="cgp-legend cgp-changes-key">
+    <span class="cgp-legend-end">0%</span>${palette.ramp.map(
+      (color) => html`<span class="cgp-swatch" style=${"background:" + color}></span>`
+    )}<span class="cgp-legend-end">100%</span>
+    <span class="cgp-legend-note">share of the readings in a cell where the posted price had
+      moved since the station's previous reading</span>
+    <span class="cgp-legend-missing"><span class="cgp-swatch" style=${
+      "background:" + palette.missing
+    }></span> fewer than 3 readings</span>
+  </div>`;
 }
 ```
 

@@ -33,7 +33,17 @@ viewof stationQuery = asField(
 // The search box and its results share one chunk, and so one card body. Given
 // a chunk each, Quarto sized the box's body to 26px and clipped the label and
 // the input inside it.
+//
+// A link to a station lands here with the box empty, and the list used to show
+// its first 40 stations regardless -- Australia and Canada first -- between the
+// reader and the station they had just picked: two screens of them on a phone.
+// With a station open and nothing typed, the box stands alone; typing brings
+// the list back.
 stationResults = {
+  const typed = (viewof stationQuery).querySelector("input").value.trim();
+  if (selectedMeta && !typed) {
+    return html`<div class="cgp-search">${viewof stationQuery}</div>`;
+  }
   const buttons = stationQuery.slice(0, 40).map((row) => {
     const suffix =
       row.status === "active"
@@ -129,6 +139,11 @@ stationChart = {
       }),
       // The faint lines were the only unlabelled thing on the chart. One label
       // on the highest of them at its last day says what the whole set is.
+      //
+      // Both labels live in the 80px right margin, 6px in. "nearest 5
+      // stations" ran 12px past the chart's edge and was cut off, at every
+      // width, and "United Kingdom median" further, so each wraps to the 7 ems
+      // of Plot's 10px type that the margin has left.
       Plot.text(topNeighbour(neighbours), {
         x: "day",
         y: "value",
@@ -139,6 +154,7 @@ stationChart = {
         dx: 6,
         dy: -8,
         textAnchor: "start",
+        lineWidth: 7,
         fill: palette.muted
       }),
       Plot.line(medians, {
@@ -154,6 +170,7 @@ stationChart = {
         text: () => medianLabel,
         dx: 6,
         textAnchor: "start",
+        lineWidth: 7,
         fill: palette.muted
       }),
       Plot.line(own, {x: "day", y: "value", z: "grade", stroke: "grade", strokeWidth: 2.5}),

@@ -53,10 +53,14 @@ so a past day shows the USD value of that day.
 // The chain comes from each row's brand. A meta.json written before the
 // collector carried one has none at all, and a column of blank cells says
 // nothing, so the column is left out until the rows can fill it.
+//
+// Six columns do not fit a phone. The table scrolls inside its own box there,
+// which can take the keyboard's focus so the scroll is not for a mouse alone.
 aboutGrades = {
   const rows = meta.grades || [];
   const withChain = rows.some((row) => row.brand);
-  return html`<table class="cgp-table">
+  return html`<div class="cgp-table-scroll" role="region" aria-label="Grades" tabindex="0">
+  <table class="cgp-table">
     <thead><tr><th>Country</th>${withChain ? html`<th>Chain</th>` : ""}<th>Source label</th>
       <th>Grade</th><th>Spec</th><th>Stated by</th></tr></thead>
     <tbody>${rows.map(
@@ -75,7 +79,7 @@ aboutGrades = {
         }</td>
       </tr>`
     )}</tbody>
-  </table>`;
+  </table></div>`;
 }
 ```
 

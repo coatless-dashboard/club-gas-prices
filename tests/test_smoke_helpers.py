@@ -16,6 +16,7 @@ from smoke_site import (  # noqa: E402
     PAGES,
     area_turns,
     chains_by_country,
+    contrast_ratio,
     currencies,
     doubles_back,
     expected_latest_stations,
@@ -23,9 +24,11 @@ from smoke_site import (  # noqa: E402
     expected_usd_countries,
     grade_table_problems,
     is_site_console_error,
+    parse_color,
     path_points,
     time_of_day_charts,
     tip_units,
+    unexplained_colors,
     usd_series,
 )
 
@@ -267,3 +270,30 @@ def test_the_grade_table_names_no_chain_the_data_does_not_hold():
     assert grade_table_problems(HEAD, cells, rows, {"COSTCO"}) == [
         "it names ['SAMS'], which have no stations here"
     ]
+
+
+def test_a_color_reads_the_same_as_hex_or_as_the_browser_reports_it():
+    # The chart writes the stylesheet's hex; the browser reports rgb().
+    assert parse_color("#e9c46a") == (233, 196, 106)
+    assert parse_color("#FFF") == (255, 255, 255)
+    assert parse_color("rgb(233, 196, 106)") == (233, 196, 106)
+    assert parse_color(" rgba(17, 20, 24, 0.5) ") == (17, 20, 24)
+    assert parse_color("amber") is None
+    assert parse_color("") is None
+
+
+def test_contrast_is_the_wcag_ratio():
+    white, black = (255, 255, 255), (0, 0, 0)
+    assert round(contrast_ratio(white, black), 2) == 21.0
+    assert contrast_ratio(black, white) == contrast_ratio(white, black)
+    assert contrast_ratio(white, white) == 1.0
+    # White on the light ramp's amber, as every cluster count was drawn.
+    assert round(contrast_ratio(white, parse_color("#e9c46a")), 2) == 1.67
+
+
+def test_a_key_must_carry_every_color_a_cell_is_drawn_in():
+    swatches = ["rgb(42, 111, 151)", "rgb(233, 196, 106)", "rgb(154, 160, 166)"]
+    assert unexplained_colors(["#2a6f97", "#E9C46A", "#9aa0a6"], swatches) == []
+    # A cell color the key does not show, and no key at all.
+    assert unexplained_colors(["#2a6f97", "#b3261e"], swatches) == ["#b3261e"]
+    assert unexplained_colors(["#2a6f97"], []) == ["#2a6f97"]

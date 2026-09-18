@@ -180,10 +180,12 @@ function coverageStrip(rows, {label}) {
     // Deliberately not "open stations": a dip is usually a collection failure,
     // not a closure, and the two read very differently.
     ariaLabel: `Stations that posted a ${label} price, by day`,
-    height: 70,
+    // Plot writes a day tick on two lines, "17" over "Sep", and a 22px gutter
+    // cut the month off every one of them.
+    height: 82,
     marginLeft: 52,
     marginRight: 80,
-    marginBottom: 22,
+    marginBottom: 34,
     style: {background: "transparent", color: palette.text},
     x: {label: null, grid: false, ticks: dayTicks(data)},
     y: {label: "stations", grid: true, nice: true, ticks: 3},
@@ -234,6 +236,7 @@ trendView = {
       return html`<div class="cgp-notice">No USD values for ${GRADE_LABELS[grade]}.</div>`;
     }
     const days = [...new Set(data.map((row) => row.day.getTime()))].sort();
+    const ends = endLabelSpace(data.map((row) => row.label));
     const marks = [];
     if (showBand) {
       marks.push(
@@ -276,8 +279,10 @@ trendView = {
           x: "day",
           y: "median",
           z: "series",
-          text: "label",
-          dx: 14,
+          text: (row) => ends.text(row.label),
+          dx: 6,
+          textAnchor: "start",
+          lineWidth: ends.lineWidth,
           fill: (row) => COUNTRY_COLORS[row.country]
         })
       ),
@@ -299,7 +304,7 @@ trendView = {
       width: chartWidth,
       ariaLabel: `Median ${GRADE_LABELS[grade]} price over time, by country`,
       height: 420,
-      marginRight: 60,
+      marginRight: ends.marginRight,
       style: {background: "transparent", color: palette.text},
       x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(days)},
       y: {label: `Median ${GRADE_LABELS[grade]}, USD ${volumeLabel}`, grid: true, nice: true},
@@ -382,6 +387,7 @@ trendView = {
     }
     const baseText = dayText(baseDay);
     const days = [...new Set(data.map((row) => row.day.getTime()))].sort();
+    const ends = endLabelSpace(data.map((row) => row.label));
     const marks = [Plot.ruleY([0], {stroke: palette.grid})];
     if (showBand) {
       marks.push(
@@ -423,8 +429,10 @@ trendView = {
           x: "day",
           y: "pct",
           z: "series",
-          text: "label",
-          dx: 14,
+          text: (row) => ends.text(row.label),
+          dx: 6,
+          textAnchor: "start",
+          lineWidth: ends.lineWidth,
           fill: (row) => COUNTRY_COLORS[row.country]
         })
       ),
@@ -446,15 +454,24 @@ trendView = {
         })
       )
     );
+    // A phone has room for about 60 characters across the chart, and the
+    // local label ran to 80: the end of it, the part that says whose currency,
+    // was cut off. There it keeps that part and drops "median Regular": the
+    // grade is the one lit in the bar above, and every line here is a median.
     const label =
       currency === "USD"
         ? `Change in median ${GRADE_LABELS[grade]} since ${baseText}, in USD (%)`
-        : `Change in median ${GRADE_LABELS[grade]} since ${baseText}, each country in its own currency (%)`;
+        : chartWidth < 500
+          ? `Change since ${baseText}, each in its own currency (%)`
+          : `Change in median ${GRADE_LABELS[grade]} since ${baseText}, each country in its own currency (%)`;
     const figure = Plot.plot({
       width: chartWidth,
       ariaLabel: `Change in median ${GRADE_LABELS[grade]} since ${baseText}, by country`,
       height: 400,
-      marginRight: 60,
+      // "+20.0%" is wider than Plot's 40px default gutter, which cut the sign
+      // off every tick above zero.
+      marginLeft: 52,
+      marginRight: ends.marginRight,
       style: {background: "transparent", color: palette.text},
       x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(days)},
       y: {label, grid: true, nice: true, tickFormat: fmtPct},

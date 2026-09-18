@@ -78,9 +78,20 @@ compareView = {
   // One mark set, four scopes. `x` carries a price where a single currency is
   // on screen and a percent change where it is not; everything else is the same
   // chart, so the page reads the same way whichever question is being asked.
-  function dotPlot(rows, {axisLabel, colorOf, zeroRule, tipTitle, marginLeft}) {
-    const pitch = rows.length > 16 ? 22 : 34;
+  function dotPlot(rows, {axisLabel, axisShort, colorOf, zeroRule, tipTitle, marginLeft}) {
+    // A phone has 337px for the whole chart. There a row's label puts each of
+    // its parts -- place, chain, day or today's median -- on a line of its own,
+    // because "United Kingdom · 2026-09-18" in one line needed half the width
+    // and still lost its first letter. An axis label with a short form takes it,
+    // since the long one ran off the chart's left edge.
+    const narrow = chartWidth < 500;
+    if (narrow) {
+      rows = rows.map((row) => Object.assign({}, row, {label: row.label.split(" · ").join("\n")}));
+    }
+    const lines = Math.max(1, ...rows.map((row) => row.label.split("\n").length));
+    const pitch = Math.max(rows.length > 16 ? 22 : 34, 11 * lines + 6);
     const radius = rows.length > 16 ? 4 : 6;
+    const countText = (row) => `${row.n} station${row.n === 1 ? "" : "s"}`;
     const marks = [];
     if (zeroRule) marks.push(Plot.ruleY([0], {stroke: palette.grid}));
     marks.push(
@@ -99,7 +110,7 @@ compareView = {
         dx: 8,
         fontSize: 11,
         fill: palette.muted,
-        text: (row) => `${row.n} station${row.n === 1 ? "" : "s"}`
+        text: countText
       }),
       Plot.dot(rows, {
         y: "label",
@@ -120,18 +131,26 @@ compareView = {
       Plot.tip(rows, Plot.pointer({y: "label", x: "value", ...tipStyle(), title: tipTitle}))
     );
     // The callers ask for up to 260px of label gutter, which is right on a wide
-    // screen and impossible on a phone: at 390px chartWidth is 342, so a 260/110
-    // pair leaves an x range of [260, 232] -- negative. Every dot then lands on
+    // screen and impossible on a phone: at 390px chartWidth is 337, so a 260/110
+    // pair leaves an x range of [260, 227] -- negative. Every dot then lands on
     // the same cx and the chart asserts that every country moved identically,
     // while the text labels print the real, differing values. Keep at least
     // 140px of plot area, whatever was asked for.
     //
     // A chain's name makes a label longer than any the callers planned for
     // ("United States · Sam's Club · 2026-09-15" lost its first letter), so the
-    // gutter grows to the longest label, at about 5.2px a character of Plot's
-    // 10px type. Every label without one already fits what was asked.
-    const marginRightUsed = chartWidth < 500 ? 56 : 110;
-    const longest = Math.max(0, ...rows.map((row) => row.label.length));
+    // gutter grows to the longest line of a label, at about 5.2px a character
+    // of Plot's 10px type. Every label without one already fits what was asked.
+    //
+    // The station counts sit in the right-hand gutter, which on a phone was a
+    // fixed 56px: "596 stations" drew as "596 stati". There it is sized to the
+    // longest count, at about 5.6px a character of their 11px type.
+    const longestCount = Math.max(0, ...rows.map((row) => countText(row).length));
+    const marginRightUsed = narrow ? Math.ceil(12 + 5.6 * longestCount) : 110;
+    const longest = Math.max(
+      0,
+      ...rows.flatMap((row) => row.label.split("\n").map((line) => line.length))
+    );
     const marginLeftUsed = Math.min(
       Math.max(marginLeft, Math.ceil(16 + 5.2 * longest)),
       Math.max(80, chartWidth - marginRightUsed - 140)
@@ -143,7 +162,7 @@ compareView = {
       marginLeft: marginLeftUsed,
       marginRight: marginRightUsed,
       style: {background: "transparent", color: palette.text},
-      x: {label: axisLabel, grid: true, nice: true},
+      x: {label: narrow && axisShort ? axisShort : axisLabel, grid: true, nice: true},
       y: {domain: rows.map((row) => row.label), label: null},
       marks
     });
@@ -257,10 +276,11 @@ compareView = {
         `median, change since ${baseText}`,
         "middle half of stations today, against the same starting point",
         `Each country is divided by its own price on ${baseText}, in its own currency — nothing ` +
-          "is converted. Its median today is printed beside its name."
+          "is converted. Its median today is printed with its name."
       ),
       dotPlot(priced, {
         axisLabel: `Change in median ${GRADE_LABELS[grade]} since ${baseText}, each country in its own currency (%)`,
+        axisShort: `Change in median since ${baseText} (%)`,
         colorOf: (row) => COUNTRY_COLORS[row.country],
         zeroRule: true,
         marginLeft: 260,

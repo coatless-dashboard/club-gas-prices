@@ -29,6 +29,11 @@ from range_server import serve  # noqa: E402
 PREFIX = "/club-gas-prices/"
 # One document per view now, so a page is a URL rather than a tab pane.
 PAGES = ["index.html", "compare.html", "trends.html", "changes.html", "station.html", "about.html"]
+# A phone: the width the audit found About scrolling sideways at, and Compare's
+# labels cut off.
+PHONE = {"width": 390, "height": 844}
+# WCAG 2.1 AA for text below 18pt, or 14pt bold: the cluster counts are both.
+AA_TEXT = 4.5
 GRADES = ["regular", "premium", "diesel"]
 CURRENCIES = ["USD", "Local"]
 VOLUMES = ["gal", "litre"]
@@ -64,16 +69,106 @@ CHANGES_ROWS_JS = """() => [...document.querySelectorAll("svg")]
       .map((rect) => rect.getAttribute("y"))).size
   }))"""
 
-# Row labels that start left of their chart, cut off by a gutter too narrow for
-# them. A chain's name is what makes a row label long.
-CLIPPED_LABELS_JS = """() => [...document.querySelectorAll("svg")]
+# Text a chart's own SVG cuts off. Plot's SVG hides whatever falls outside it,
+# so a label past an edge is simply not drawn: "nited Kingdom" and "596 stati"
+# on Compare, the month under every day on the Trends strip, the bottom of every
+# date on Changes. A chain's name is what made a row label long. The tip is left
+# out; it is only drawn under the pointer.
+CLIPPED_TEXT_JS = """() => [...document.querySelectorAll("svg")]
   .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"))
   .flatMap((svg) => {
-    const left = svg.getBoundingClientRect().left;
-    return [...svg.querySelectorAll('g[aria-label="y-axis tick label"] text')]
-      .filter((text) => text.getBoundingClientRect().left < left - 0.5)
-      .map((text) => text.textContent);
+    const box = svg.getBoundingClientRect();
+    if (!box.width) return [];
+    return [...svg.querySelectorAll("text")]
+      .filter((text) => !text.closest('g[aria-label="tip"]'))
+      .filter((text) => {
+        const r = text.getBoundingClientRect();
+        return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1
+          || r.top < box.top - 1 || r.bottom > box.bottom + 1);
+      })
+      .map((text) => `${svg.getAttribute("aria-label") || ""}: ${text.textContent}`);
   })"""
+
+# Charts drawn wider than the box that shows them, and so scaled down to fit it,
+# type and all. OJS's `width` measured the window rather than the page, and at
+# 1440px every chart came out at 78% of its size.
+SHRUNK_CHARTS_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"))
+  .map((svg) => ({
+    chart: svg.getAttribute("aria-label") || "",
+    drawn: Number(svg.getAttribute("width")),
+    shown: svg.getBoundingClientRect().width
+  }))
+  .filter((c) => c.shown > 0 && c.drawn > 0 && c.shown < 0.97 * c.drawn)
+  .map((c) => `${c.chart} (${Math.round(c.shown)} of ${c.drawn}px)`)"""
+
+# How far the page reaches past the viewport, and the outermost elements that
+# take it there. Anything inside a box that clips or scrolls its own overflow --
+# the map, a wide table, the row of country buttons -- stays where it is and is
+# not the page's problem.
+OVERFLOW_JS = """() => {
+  const doc = document.documentElement;
+  const edge = doc.clientWidth;
+  const outside = (el) => {
+    const r = el.getBoundingClientRect();
+    return (r.width > 0 || r.height > 0) && (r.right > edge + 1 || r.left < -1);
+  };
+  const clipped = (el) => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      if (getComputedStyle(p).overflowX !== "visible") return true;
+    }
+    return false;
+  };
+  const wide = [...document.body.querySelectorAll("*")]
+    .filter((el) => outside(el) && !clipped(el)
+      && !(el.parentElement && el.parentElement !== document.body && outside(el.parentElement)))
+    .slice(0, 5)
+    .map((el) => {
+      const r = el.getBoundingClientRect();
+      const name = el.getAttribute("class") || "";
+      return `${el.tagName.toLowerCase()}.${name} [${Math.round(r.left)}, ${Math.round(r.right)}]`;
+    });
+  return {scroll: doc.scrollWidth, client: edge, wide};
+}"""
+
+# Captions set anywhere but over the start of their own options. Below 30em
+# Observable centers a form's items, so on a phone every caption sat centered.
+OFF_CENTER_CAPTIONS_JS = """() => [...document.querySelectorAll(
+    ".cgp-field:not(.cgp-field--inline) > label")]
+  .filter((label) => label.getBoundingClientRect().width > 1)
+  .filter((label) => Math.abs(label.getBoundingClientRect().left
+    - label.parentElement.getBoundingClientRect().left) > 1)
+  .map((label) => label.textContent.trim())"""
+
+# How far the station search's result count reaches past the search card: its
+# box had an 18rem floor, and on a phone the count ran off the page.
+SEARCH_COUNT_JS = """() => {
+  const card = document.querySelector(".cgp-search");
+  const count = card && card.querySelector("output");
+  if (!count) return null;
+  return count.getBoundingClientRect().right - card.getBoundingClientRect().right;
+}"""
+
+# What every visible cluster badge draws its count in, and on.
+CLUSTER_COLORS_JS = """() => [...document.querySelectorAll(".cgp-cluster span")]
+  .filter((span) => span.getBoundingClientRect().width > 0)
+  .map((span) => {
+    const style = getComputedStyle(span);
+    return {count: span.textContent.trim(), ink: style.color, fill: style.backgroundColor};
+  })"""
+
+# The Changes key: its words and swatches, and every color a cell is drawn in.
+CHANGES_KEY_JS = """() => {
+  const key = document.querySelector(".cgp-changes-key");
+  return {
+    text: key ? key.textContent.replace(/\\s+/g, " ").trim() : "",
+    swatches: key
+      ? [...key.querySelectorAll(".cgp-swatch")].map((s) => getComputedStyle(s).backgroundColor)
+      : [],
+    cells: [...new Set([...document.querySelectorAll('svg g[aria-label="cell"] rect')]
+      .map((rect) => rect.getAttribute("fill")))]
+  };
+}"""
 
 # The x-axis tick labels of every Plot chart. Plot writes a two-line label as
 # two tspans, which are joined with a space so "12 AM" and "Sep 17" stay apart.
@@ -321,6 +416,53 @@ def grade_table_problems(
     return problems
 
 
+def parse_color(text: str) -> tuple[int, int, int] | None:
+    """A CSS color as the page gives it -- "#rgb", "#rrggbb" or "rgb(...)" -- as RGB.
+
+    The chart writes its fills as the stylesheet's hex tokens and the browser
+    reports computed colors as rgb(), so both have to land on one form before
+    they can be compared. Alpha is ignored: nothing checked here is translucent.
+    """
+    value = (text or "").strip().lower()
+    match = re.fullmatch(r"#([0-9a-f]{3}|[0-9a-f]{6})", value)
+    if match:
+        digits = match.group(1)
+        if len(digits) == 3:
+            digits = "".join(c * 2 for c in digits)
+        return tuple(int(digits[i : i + 2], 16) for i in (0, 2, 4))
+    match = re.fullmatch(r"rgba?\(([^)]*)\)", value)
+    if match:
+        parts = re.findall(r"[\d.]+", match.group(1))
+        if len(parts) >= 3:
+            return tuple(round(float(p)) for p in parts[:3])
+    return None
+
+
+def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """WCAG 2's contrast ratio between two RGB colors, from 1 to 21."""
+
+    def luminance(rgb: tuple[int, int, int]) -> float:
+        channels = []
+        for value in rgb:
+            c = value / 255
+            channels.append(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+        red, green, blue = channels
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def unexplained_colors(cells: list[str], swatches: list[str]) -> list[str]:
+    """The cell colors a key has no swatch for.
+
+    A key that shows a different blue from the cells, or none of the gray,
+    leaves the reader where no key at all did.
+    """
+    keyed = {parse_color(color) for color in swatches}
+    return sorted({color for color in cells if parse_color(color) not in keyed})
+
+
 def is_site_console_error(message_type: str, location_url: str, origin: str) -> bool:
     """True for console errors the page itself produced.
 
@@ -565,6 +707,76 @@ def grade_table_check(page, failures: Failures, step: str, meta: dict, latest: l
         print(f"{step}: ok, grade table has {len(table['rows'])} rows", flush=True)
 
 
+def chart_text_check(page, failures: Failures, step: str) -> None:
+    """Every label on every chart is drawn whole."""
+    clipped = page.evaluate(CLIPPED_TEXT_JS)
+    if clipped:
+        failures.add(f"{step}: chart text cut off at the chart's edge: {clipped[:8]}")
+    else:
+        print(f"{step}: ok, every chart label drawn whole", flush=True)
+
+
+def chart_scale_check(page, failures: Failures, step: str) -> None:
+    """Every chart is drawn at the width it is shown at, so its type is full size."""
+    shrunk = page.evaluate(SHRUNK_CHARTS_JS)
+    if shrunk:
+        failures.add(f"{step}: charts drawn wider than the page and shrunk to fit it: {shrunk}")
+
+
+def overflow_check(page, failures: Failures, step: str) -> None:
+    """The page does not scroll sideways."""
+    info = page.evaluate(OVERFLOW_JS)
+    if info["scroll"] > info["client"] + 1:
+        failures.add(
+            f"{step}: the page scrolls sideways, {info['scroll']}px wide in a "
+            f"{info['client']}px viewport: {info['wide']}"
+        )
+    else:
+        print(f"{step}: ok, no sideways scroll at {info['client']}px", flush=True)
+
+
+def cluster_contrast_check(page, failures: Failures, step: str) -> None:
+    """Every cluster count on the map meets AA against its own fill.
+
+    White on every step was 1.7:1 on the amber most groups land on.
+    """
+    theme = (
+        "dark"
+        if page.evaluate("() => document.body.classList.contains('quarto-dark')")
+        else "light"
+    )
+    badges = page.evaluate(CLUSTER_COLORS_JS)
+    if not badges:
+        failures.add(f"{step}: no cluster on the {theme} map to read the count of")
+        return
+    faint = []
+    for badge in badges:
+        ink, fill = parse_color(badge["ink"]), parse_color(badge["fill"])
+        ratio = contrast_ratio(ink, fill) if ink and fill else 0.0
+        if ratio < AA_TEXT:
+            faint.append(f"{badge['count']}: {badge['ink']} on {badge['fill']}, {ratio:.2f}:1")
+    if faint:
+        failures.add(f"{step}: {theme} cluster counts below {AA_TEXT}:1: {faint[:4]}")
+    else:
+        print(f"{step}: ok, {len(badges)} {theme} cluster counts meet AA", flush=True)
+
+
+def changes_key_check(page, failures: Failures, step: str) -> None:
+    """The heatmap says what its colors and its gray mean, in the colors it uses."""
+    key = page.evaluate(CHANGES_KEY_JS)
+    missing = unexplained_colors(key["cells"], key["swatches"])
+    if not key["cells"]:
+        failures.add(f"{step}: no heatmap cells to explain")
+    elif not key["swatches"]:
+        failures.add(f"{step}: the heatmap has no key")
+    elif missing:
+        failures.add(f"{step}: the key has no swatch for the cell colors {missing}")
+    elif "fewer than 3 readings" not in key["text"]:
+        failures.add(f"{step}: the key does not say what the gray means: {key['text']!r}")
+    else:
+        print(f"{step}: ok, the key explains all {len(key['cells'])} cell colors", flush=True)
+
+
 def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures, collected):
     """Two chains in one country are two series on every page.
 
@@ -580,13 +792,11 @@ def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures,
     wait_idle(page, failures, "step 5 compare")
     expected = len(usd_series(latest, "regular"))
     drawn = page.locator(COMPARE_DOTS).count()
-    clipped = page.evaluate(CLIPPED_LABELS_JS)
     if drawn < expected:
         failures.add(f"step 5 compare: {drawn} dots for {expected} chains across countries")
-    elif clipped:
-        failures.add(f"step 5 compare: row labels cut off at the left: {clipped}")
     else:
         print(f"step 5 compare: ok, a dot for each of {expected} chains", flush=True)
+    chart_text_check(page, failures, "step 5 compare")
     for code in shared:
         page.goto(base_url + "compare.html", wait_until="load")
         wait_idle(page, failures, f"step 5 compare {code}")
@@ -599,6 +809,7 @@ def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures,
             failures.add(f"step 5 compare {code}: {drawn} dots for {expected} region chains")
         else:
             print(f"step 5 compare {code}: ok, a dot for each of {expected} chains", flush=True)
+        chart_text_check(page, failures, f"step 5 compare {code}")
     check_clean(page, failures, "step 5 compare", collected)
 
     # Trends: a region both chains serve is two lines, not one sawtooth.
@@ -650,7 +861,74 @@ def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures,
         failures.add(f"step 5 changes {region}: rows with no readings in {blank}")
     else:
         print(f"step 5 changes {region}: ok, each chain lists only its stations", flush=True)
+    chart_text_check(page, failures, f"step 5 changes {region}")
     check_clean(page, failures, "step 5 changes", collected)
+
+
+def open_page(browser, viewport: dict, collected: dict, origin: str, *, scheme: str = "light"):
+    """A page at `viewport` that counts cell starts, stubs tiles and fonts, and
+    collects the site's own console errors into `collected`. `scheme` is the
+    color scheme the browser asks for, which the site follows."""
+    page = browser.new_page(viewport=viewport, color_scheme=scheme)
+    page.add_init_script(TRACK_CELL_STARTS_SCRIPT)
+    page.on(
+        "console",
+        lambda m: (
+            collected["console"].append(f"{m.text[:400]} @ {m.location.get('url', '')}")
+            if is_site_console_error(m.type, m.location.get("url", ""), origin)
+            else None
+        ),
+    )
+    page.on("pageerror", lambda e: collected["pageerror"].append(str(e)[:400]))
+    install_routes(page)
+    return page
+
+
+def phone_steps(page, base_url: str, first_key: str, failures: Failures, collected) -> None:
+    """Every page at a phone's width: nothing scrolls sideways, every chart label
+    is drawn whole and every caption sits over its options. Most of the map is
+    on the first screen, and a link to a station opens on that station rather
+    than on a list of forty others."""
+    views = [
+        *PAGES,
+        "compare.html?cur=Local",
+        "trends.html?view=change&cur=Local",
+        "trends.html?view=separate&cur=Local",
+        f"station.html?station={quote(first_key, safe='')}",
+    ]
+    for view in views:
+        step = f"step 6 phone {view}"
+        page.goto(base_url + view, wait_until="load")
+        wait_idle(page, failures, step)
+        overflow_check(page, failures, step)
+        chart_text_check(page, failures, step)
+        off_center = page.evaluate(OFF_CENTER_CAPTIONS_JS)
+        if off_center:
+            failures.add(f"{step}: captions not over the start of their options: {off_center}")
+        past = page.evaluate(SEARCH_COUNT_JS)
+        if past is not None and past > 1:
+            failures.add(f"{step}: the search count runs {past:.0f}px past the page")
+        if view == "compare.html":
+            # One country by region has row labels and an axis label of its own.
+            choose(page, "breakdown", "US")
+            page.wait_for_selector('svg[aria-label*="by region"]', timeout=IDLE_TIMEOUT_MS)
+            wait_idle(page, failures, f"{step} US")
+            chart_text_check(page, failures, f"{step} US")
+        if view == "index.html":
+            box = page.locator(".cgp-map").first.bounding_box()
+            shown = min(box["y"] + box["height"], PHONE["height"]) - box["y"] if box else 0
+            # The controls above it once left 226px of the map on the first screen.
+            if shown < 300:
+                failures.add(f"{step}: {shown:.0f}px of the map on the first screen, not 300")
+            else:
+                print(f"{step}: ok, {shown:.0f}px of the map on the first screen", flush=True)
+        if view.startswith("station.html?"):
+            box = page.locator(".cgp-station-chart").first.bounding_box()
+            if not box or box["y"] + 200 > PHONE["height"]:
+                failures.add(f"{step}: the station's chart starts below the first screen ({box})")
+            else:
+                print(f"{step}: ok, the station's chart is on the first screen", flush=True)
+        check_clean(page, failures, step, collected)
 
 
 def launch_browser(playwright, *, headed: bool = False):
@@ -692,18 +970,7 @@ def main() -> int:
     try:
         with sync_playwright() as playwright:
             browser = launch_browser(playwright, headed=args.headed)
-            page = browser.new_page(viewport={"width": 1400, "height": 1000})
-            page.add_init_script(TRACK_CELL_STARTS_SCRIPT)
-            page.on(
-                "console",
-                lambda m: (
-                    collected["console"].append(f"{m.text[:400]} @ {m.location.get('url', '')}")
-                    if is_site_console_error(m.type, m.location.get("url", ""), origin)
-                    else None
-                ),
-            )
-            page.on("pageerror", lambda e: collected["pageerror"].append(str(e)[:400]))
-            install_routes(page)
+            page = open_page(browser, {"width": 1400, "height": 1000}, collected, origin)
 
             # Step 1: load, assert the page ids, check the Map with the defaults.
             page.goto(base_url + "index.html", wait_until="load")
@@ -719,7 +986,21 @@ def main() -> int:
                 if name not in linked:
                     failures.add(f"step 1: the navbar does not link {name} (has {linked})")
             map_check(page, failures, "step 1", latest, "regular")
+            cluster_contrast_check(page, failures, "step 1")
             check_clean(page, failures, "step 1", collected)
+            # The dark theme has its own ramp, so its counts are checked on a
+            # map that loads dark, the way a reader who prefers it sees it.
+            dark = open_page(
+                browser, {"width": 1400, "height": 1000}, collected, origin, scheme="dark"
+            )
+            dark.goto(base_url + "index.html", wait_until="load")
+            wait_idle(dark, failures, "step 1 dark")
+            if not dark.evaluate("() => document.body.classList.contains('quarto-dark')"):
+                failures.add("step 1 dark: the site did not follow the browser into dark mode")
+            dark.wait_for_selector(".cgp-cluster span", timeout=IDLE_TIMEOUT_MS)
+            cluster_contrast_check(dark, failures, "step 1 dark")
+            check_clean(dark, failures, "step 1 dark", collected)
+            dark.close()
 
             # Step 2: visit every page. Compare and Trends are checked for
             # content as well: navigation and the absence of an error cell say
@@ -738,8 +1019,12 @@ def main() -> int:
                 elif page_id == "trends":
                     plot_check(page, failures, "step 2 trends", TREND_MARKS, countries, "marks")
                     note_check(page, failures, "step 2 trends", stations_on_latest_day)
+                elif page_id == "changes":
+                    changes_key_check(page, failures, "step 2 changes")
                 elif page_id == "about":
                     grade_table_check(page, failures, "step 2 about", meta, latest)
+                chart_text_check(page, failures, f"step 2 {page_id}")
+                chart_scale_check(page, failures, f"step 2 {page_id}")
                 check_clean(page, failures, f"step 2 {page_id}", collected)
 
             # Step 2c: hovering a chart has to raise a tip. The tip mark is easy
@@ -799,6 +1084,7 @@ def main() -> int:
                 page.goto(base_url + "trends.html" + view, wait_until="load")
                 wait_idle(page, failures, step)
                 day_ticks_check(page, failures, step)
+                chart_text_check(page, failures, step)
                 if "change" in view:
                     change_tip_check(page, failures, step, currencies(latest))
                 check_clean(page, failures, step, collected)
@@ -864,6 +1150,18 @@ def main() -> int:
             wait_idle(page, failures, "step 4 deep link")
             if not page.url.split("/")[-1].startswith("station.html"):
                 failures.add(f"step 4: the deep link did not land on station.html ({page.url})")
+            # The link names its station, so the search list stands down until
+            # something is typed: it put forty other stations above this one.
+            listed = page.locator(".cgp-results button").count()
+            if listed:
+                failures.add(f"step 4: the deep link lands under {listed} unrelated search results")
+            else:
+                page.locator(".cgp-search input[type=search]").fill(latest[0]["name"])
+                try:
+                    page.wait_for_selector(".cgp-results button", timeout=10_000)
+                    print("step 4: search list hidden until something is typed", flush=True)
+                except PlaywrightTimeoutError:
+                    failures.add("step 4: typing in the search box brought no results back")
             marks = page.locator(
                 '.cgp-station-chart svg g[aria-label="line"] path, '
                 '.cgp-station-chart svg g[aria-label="dot"] circle'
@@ -907,6 +1205,7 @@ def main() -> int:
                 else:
                     print(f"step 4: chart tip reads {tip.splitlines()[0][:36]!r}", flush=True)
             day_ticks_check(page, failures, "step 4")
+            chart_text_check(page, failures, "step 4")
             panel = page.locator("body").inner_text()
             if "USD" not in panel:
                 failures.add("step 4: the station panel never mentions the USD conversion")
@@ -917,6 +1216,10 @@ def main() -> int:
                 two_chain_steps(page, base_url, latest, failures, collected)
             else:
                 print("step 5: one chain in latest.json, so the two-chain checks skip", flush=True)
+
+            # Step 6: a phone.
+            phone = open_page(browser, PHONE, collected, origin)
+            phone_steps(phone, base_url, first_key, failures, collected)
 
             browser.close()
     finally:

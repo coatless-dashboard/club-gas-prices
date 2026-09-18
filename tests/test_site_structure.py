@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +53,12 @@ def test_every_page_exists_and_is_in_the_navbar():
 
 def test_every_page_pulls_in_the_shared_cells_and_the_controls():
     """Each page is its own OJS runtime, so the shared cells are included into
-    every one of them rather than shared between them."""
+    every one of them rather than shared between them.
+
+    About shows no price and keeps the controls anyway. The shared cells it
+    includes read Grade, Currency and Volume, and without the controls nine of
+    them fail with "grade is not defined"; the include also carries the notice
+    that says how fresh the data is."""
     for name in PAGES:
         text = (SITE / name).read_text(encoding="utf-8")
         assert "{{< include _shared.qmd >}}" in text, name
@@ -661,3 +667,31 @@ def test_changes_rows_are_per_chain_and_keyed_on_the_station():
     assert "cells.map((c) => c.key)" not in chart
     assert "tickFormat: labelOf" in chart
     assert "station_key: nameOf.get(" not in changes
+
+
+def css_color(text: str, token: str) -> str:
+    return re.search(rf"{token}:\s*(#[0-9a-fA-F]{{3,6}})\s*;", text).group(1)
+
+
+def test_every_cluster_count_meets_aa_on_every_fill_in_both_themes():
+    """A cluster's count is 11.7px text on whichever ramp step its median lands
+    on, and it was white on all of them: 1.67:1 on the light amber and 1.55:1
+    on the dark one, where WCAG AA asks 4.5:1. The ink is now whichever of two
+    stands out more from the fill, and every fill has one that clears it."""
+    sys.path.insert(0, str(ROOT / "tests" / "smoke"))
+    from smoke_site import contrast_ratio, parse_color
+
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    inks = re.findall(r"#[0-9a-fA-F]{6}", shared.split("CLUSTER_INKS = [", 1)[1].split("]", 1)[0])
+    assert len(inks) == 2
+    assert "color:${inkOn(fill)}" in shared.split("function clusterIcon(", 1)[1]
+    # Nothing fixes the count's color behind the ink's back.
+    badge = CUSTOM.read_text(encoding="utf-8").split(".cgp-cluster span {", 1)[1].split("}", 1)[0]
+    assert re.search(r"(?<![-\w])color:", badge) is None
+    tokens = [f"--cgp-ramp-{i}" for i in range(1, 6)] + ["--cgp-missing"]
+    for path in (CUSTOM, DARK):
+        text = path.read_text(encoding="utf-8")
+        for token in tokens:
+            fill = parse_color(css_color(text, token))
+            best = max(contrast_ratio(parse_color(ink), fill) for ink in inks)
+            assert best >= 4.5, f"{path.name} {token}: best ink is {best:.2f}:1"

@@ -209,6 +209,21 @@ main.content > p {
   font-variant-numeric: tabular-nums;
 }
 
+// A request URL has nowhere to break, so About's endpoint table ran 170px past
+// the edge of a phone and took the whole page sideways with it. Inside a table
+// cell a code span may break anywhere instead: the URL wraps, the page holds
+// still.
+td code {
+  overflow-wrap: anywhere;
+}
+
+// A table with more columns than a phone has room for scrolls inside its own
+// box rather than widening the page.
+.cgp-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .cgp-stale {
   color: var(--cgp-muted);
   font-size: 0.75rem;
@@ -442,6 +457,13 @@ main.content > p {
   order: 2;
 }
 
+// Observable centers a form's items below 30em and only moves the caption back
+// to the start above it, so on a phone every caption sat centered over options
+// that start at the left edge.
+.cgp-field:not(.cgp-field--inline) > label {
+  align-self: flex-start;
+}
+
 .cgp-field--inline > div {
   order: 1;
   flex: 0 0 auto;
@@ -509,6 +531,93 @@ main.content > p {
   min-width: 0;
 }
 
+// On a phone the bar stacked its three groups under three captions: 236px of
+// an 844px screen, held there on every scroll because the bar is sticky, and
+// only 226px of the map left above the fold. Narrow, the captions leave the
+// screen but stay in the page for a screen reader -- the options name
+// themselves, and nobody needs "Volume" over "per US gallon" -- the pills
+// tighten, and the groups share rows.
+@media (max-width: 575.98px) {
+  .cgp-controlbar {
+    gap: 0.3rem 0.9rem;
+    padding: 0.4rem 0 0.45rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .cgp-controlbar .cgp-field {
+    margin: 0;
+  }
+
+  .cgp-controlbar .cgp-field > label {
+    position: absolute;
+    width: 1px !important;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .cgp-controlbar .cgp-field > div {
+    width: auto;
+    gap: 0.25rem;
+  }
+
+  // Observable's own margin on an option beats the `margin: 0` that
+  // `.cgp-field > div > label` gives it, on source order, and spent 13px after
+  // every pill.
+  .cgp-controlbar .cgp-field > div > label {
+    position: relative;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.8rem;
+  }
+
+  .cgp-controlbar .cgp-notice {
+    flex-basis: 100%;
+  }
+
+  // The search box's 18rem floor and the count beside it came to 350px, and
+  // the count ran off the edge of the page: "762 resul".
+  .cgp-search > .cgp-field input {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  // The country jump-buttons keep to one row that scrolls sideways inside its
+  // own box, rather than three rows between the reader and the map.
+  .cgp-map-controls .cgp-pills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .cgp-map-controls .cgp-pills button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+// The dot inside each pill is what keeps Grade and Currency from sharing a row
+// on a phone. Where :has() can fill the chosen pill, the fill says which one is
+// chosen, so the dot leaves the screen -- still focusable, still read out, and
+// the pill carries the focus ring. Forced colors paint over that fill, so there
+// the dot stays.
+@supports selector(:has(*)) {
+  @media (max-width: 575.98px) and (forced-colors: none) {
+    .cgp-controlbar .cgp-field > div > label input[type="radio"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      opacity: 0;
+    }
+  }
+}
+
 // A panel groups a section under its heading. It used to draw a bordered,
 // filled box around whatever was inside -- around a single dropdown, around one
 // line of notes -- so every page read as a stack of containers and the boxes
@@ -555,7 +664,9 @@ h2 {
 
 // A group of stations, colored by the median of the stations inside it. The
 // plugin's own styles draw a pale blue disc that carries no meaning here, so
-// the badge is drawn from scratch.
+// the badge is drawn from scratch. The count's color is set with the fill, by
+// inkOn: a fixed white failed contrast on most of the ramp, and a shadow under
+// it did not rescue it.
 .cgp-cluster {
   background: none;
   border: 0;
@@ -569,10 +680,8 @@ h2 {
   height: 100%;
   border-radius: 50%;
   border: 2px solid;
-  color: #ffffff;
   font-size: 0.78rem;
   font-weight: 600;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 
