@@ -563,14 +563,48 @@ def test_the_notice_and_a_route_for_rights_holders_are_in_the_footer():
     assert "one of these chains" in footer
     # A takedown is offered, in whatever words.
     assert "removed" in footer
-    # By an issue, and by nothing else: the footer told chains to write to an
-    # address in the repository, and the repository publishes none.
+    # By an issue, or by writing in. The footer once told chains to write to an
+    # address in the repository, which published none; the one it offers now
+    # is built in the reader's browser from its parts, the scheme included.
     body = footer.split("siteFooter = {", 1)[1]
     assert '"/issues/new"' in body
-    assert "address" not in body
+    assert "on GitHub or email ${mail}." in body
+    assert '["support", ["caffeinatedmath", "com"].join(".")].join("@")' in body
+    assert '"mail" + "to:" + address' in body
+    assert "mailto:" not in footer
     assert "README" not in body
     for name in PAGES:
         assert "{{< include _footer.qmd >}}" in (SITE / name).read_text(encoding="utf-8"), name
+
+
+def test_the_contact_address_is_never_written_whole():
+    """The footer offers chains an address to write to and puts it together in
+    the reader's browser. Written whole anywhere a crawler reads -- the site's
+    source, the README, a rendered page -- it would be harvested along with
+    every other address on the web, so the README spells it out in words.
+
+    CI runs this before it renders, so the rendered pages are read here only
+    where a local render left them; the smoke test reads CI's own."""
+    sys.path.insert(0, str(ROOT / "tests" / "smoke"))
+    from smoke_site import ojs_sources
+
+    domain = ".".join(("caffeinatedmath", "com"))
+    address = "@".join(("support", domain))
+    needles = (address, "@" + domain, "mailto:" + address)
+    sources = [path for path in SITE.rglob("*") if path.is_file()]
+    sources.append(ROOT / "README.md")
+    assert len(sources) > 10  # the walk finds the site, so this is not vacuous
+    for path in sources:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        for needle in needles:
+            assert needle not in text, path.relative_to(ROOT)
+    for page in sorted((ROOT / "_site").glob("*.html")):
+        text = page.read_text(encoding="utf-8")
+        for part in (text, *ojs_sources(text)):
+            for needle in needles:
+                assert needle not in part, page.name
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    assert "email support [at] caffeinatedmath [dot] com" in readme
 
 
 def test_a_daily_series_gets_daily_ticks():

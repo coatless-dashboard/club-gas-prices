@@ -275,6 +275,12 @@ PRIMARY_CHAIN = "COSTCO"
 # A tick label that names a time of day: "12 AM", "6 PM", "3:15".
 TIME_OF_DAY = re.compile(r"\b\d{1,2}(?::\d{2})? ?[AP]M\b|\b\d{1,2}:\d{2}\b")
 
+# The address the footer offers a chain to write to, put together from its
+# parts as the footer puts it together: no file in the repository holds it
+# whole, so a crawler harvesting addresses from files finds none to take.
+CONTACT_DOMAIN = ".".join(("caffeinatedmath", "com"))
+CONTACT_ADDRESS = "@".join(("support", CONTACT_DOMAIN))
+
 TILE_HOSTS = ("basemaps.cartocdn.com", "tile.openstreetmap.org")
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 # The page's libraries come from these two, so they are never intercepted.
@@ -723,6 +729,31 @@ def unexplained_colors(cells: list[str], swatches: list[str]) -> list[str]:
     return sorted({color for color in cells if parse_color(color) not in keyed})
 
 
+def ojs_sources(page: str) -> list[str]:
+    """The OJS source Quarto writes into a rendered page, decoded.
+
+    Quarto base64-encodes a page's cells into an `ojs-module-contents` script,
+    so a plain search of the page never sees them, and a crawler that decodes
+    them would.
+    """
+    blobs = re.findall(r'<script type="ojs-module-contents">\s*([^<]*?)\s*</script>', page)
+    return [base64.b64decode(blob).decode("utf-8") for blob in blobs]
+
+
+def files_holding(site_dir: Path, needles: tuple[str, ...]) -> list[str]:
+    """The files at the top of a rendered site that hold any of `needles`.
+
+    That is every page, the search index and the sitemap, each read as it is
+    served, and each page's OJS source decoded as well.
+    """
+    found = []
+    for path in sorted(p for p in site_dir.iterdir() if p.is_file()):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(needle in part for part in (text, *ojs_sources(text)) for needle in needles):
+            found.append(path.name)
+    return found
+
+
 def is_site_console_error(message_type: str, location_url: str, origin: str) -> bool:
     """True for console errors the page itself produced.
 
@@ -974,6 +1005,26 @@ def chart_text_check(page, failures: Failures, step: str) -> None:
         failures.add(f"{step}: chart text cut off at the chart's edge: {clipped[:8]}")
     else:
         print(f"{step}: ok, every chart label drawn whole", flush=True)
+
+
+def footer_mail_check(page, failures: Failures, step: str) -> None:
+    """The footer's email link, once the page has run, writes to the address.
+
+    The page builds the link in the browser, from parts, so this is the one
+    place it can be read whole: a mail link to the address, which shows the
+    address as its text.
+    """
+    link = page.locator(".cgp-footer a[href^='mailto:']")
+    if not link.count():
+        failures.add(f"{step}: the footer has no email link")
+        return
+    href, shown = link.first.get_attribute("href"), link.first.inner_text().strip()
+    if href != "mailto:" + CONTACT_ADDRESS:
+        failures.add(f"{step}: the footer's email link goes to {href!r}")
+    elif shown != CONTACT_ADDRESS or not link.first.is_visible():
+        failures.add(f"{step}: the footer's email link shows {shown!r}, not the address")
+    else:
+        print(f"{step}: ok, the footer links and shows the address", flush=True)
 
 
 def end_label_check(page, failures: Failures, step: str, *, required: bool) -> None:
@@ -1363,6 +1414,11 @@ def main() -> int:
     origin = base_url[: base_url.index(PREFIX)]
     failures = Failures()
     collected = {"console": [], "pageerror": []}
+    # The pages build the address in the browser. Its domain after an "@", in
+    # anything Quarto rendered, is an address there for a crawler to harvest.
+    leaked = files_holding(site_dir, ("@" + CONTACT_DOMAIN,))
+    if leaked:
+        failures.add(f"the contact address is written whole in {leaked}")
 
     try:
         with sync_playwright() as playwright:
@@ -1423,6 +1479,7 @@ def main() -> int:
                 wait_idle(page, failures, f"step 2 {page_id}")
                 page.remove_listener("request", note)
                 history_fetch_check(name, requested, failures, f"step 2 {page_id}")
+                footer_mail_check(page, failures, f"step 2 {page_id}")
                 if page_id == "compare":
                     plot_check(page, failures, "step 2 compare", COMPARE_DOTS, countries, "dots")
                 elif page_id == "trends":

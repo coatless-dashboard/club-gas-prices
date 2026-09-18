@@ -126,6 +126,12 @@ The asset names and the parquet columns are commented as such on both sides. A c
 or field added there without a change here renders a page against a shape it never
 receives, and `test_site_sample.py` is what fails first.
 
+## Contact
+
+Represent one of these chains and want something changed or removed?
+[Open an issue](https://github.com/coatless-data/club-gas-prices/issues/new) on GitHub or
+email support [at] caffeinatedmath [dot] com.
+
 ## License
 
 MIT. See [LICENSE](LICENSE). The prices belong to the retailers; see the notice above.

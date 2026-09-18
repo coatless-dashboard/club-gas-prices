@@ -3,18 +3,24 @@
 ```{ojs}
 // The notice comes from config/site.toml through meta.json: a shared prefix
 // followed by one clause per chain actually present in the capture, so a reader
-// is never disclaimed at about a chain this page cannot show them. An issue is
-// the only route offered, because it is the only one that exists: the
-// repository publishes no contact address to point a chain at.
+// is never disclaimed at about a chain this page cannot show them. A chain that
+// wants something changed can open an issue or write in.
+//
+// The address is put together here, in the reader's browser, from its parts.
+// Neither this source nor the page Quarto renders from it holds the address
+// whole, or a mail link to it, so a crawler harvesting addresses from the HTML
+// finds nothing to take; a reader sees an ordinary link.
 siteFooter = {
   const repo = (meta.releases && meta.releases.all
     ? meta.releases.all.replace(/\/releases.*$/, "")
     : "https://github.com/coatless-data/club-gas-prices");
+  const address = ["support", ["caffeinatedmath", "com"].join(".")].join("@");
+  const mail = html`<a href=${"mail" + "to:" + address}>${address}</a>`;
   return html`<div>
     ${(Array.isArray(meta.notice) ? meta.notice : [meta.notice])
       .map((line) => html`<p class="cgp-footer-notice">${line}</p>`)}
     <p class="cgp-footer-notice">Represent one of these chains and want something changed or
-      removed? <a href=${repo + "/issues/new"}>Open an issue</a> on GitHub.</p>
+      removed? <a href=${repo + "/issues/new"}>Open an issue</a> on GitHub or email ${mail}.</p>
   </div>`;
 }
 ```

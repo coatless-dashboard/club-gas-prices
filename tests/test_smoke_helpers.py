@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
@@ -16,6 +17,8 @@ sys.path.insert(0, str(SMOKE))
 
 import smoke_site  # noqa: E402
 from smoke_site import (  # noqa: E402
+    CONTACT_ADDRESS,
+    CONTACT_DOMAIN,
     LIBRARY_HOSTS,
     PAGES,
     area_turns,
@@ -29,11 +32,13 @@ from smoke_site import (  # noqa: E402
     expected_usd_countries,
     fetches_history,
     fewest_stations_state,
+    files_holding,
     freshness_cases,
     grade_table_problems,
     is_site_console_error,
     launch_browser,
     misaligned_ticks,
+    ojs_sources,
     overlapping_labels,
     parse_color,
     path_points,
@@ -304,6 +309,35 @@ def test_the_strip_must_tick_the_charts_days_where_the_chart_does():
     shifted = [{"label": "3", "x": 40.0}, *chart[1:]]
     assert misaligned_ticks(chart, shifted) == ["the first tick is '3' under '2 Sep'"]
     assert misaligned_ticks(chart, []) == ["3 chart ticks against 0 strip ticks"]
+
+
+def ojs_page(source: str) -> str:
+    """A rendered page as Quarto writes one: its OJS source base64-encoded."""
+    blob = base64.b64encode(json.dumps({"contents": [{"source": source}]}).encode()).decode()
+    return f'<html><script type="ojs-module-contents">\n{blob}\n</script></html>'
+
+
+def test_the_contact_address_is_the_footers_parts_put_together():
+    assert CONTACT_ADDRESS.split("@") == ["support", CONTACT_DOMAIN]
+    assert CONTACT_DOMAIN.split(".") == ["caffeinatedmath", "com"]
+
+
+def test_a_page_is_searched_with_its_ojs_source_decoded(tmp_path: Path):
+    needle = "@" + CONTACT_DOMAIN
+    # The footer as it is: the parts, and nothing whole.
+    footer = 'const address = ["support", ["caffeinatedmath", "com"].join(".")].join("@");'
+    assert needle not in ojs_sources(ojs_page(footer))[0]
+    (tmp_path / "index.html").write_text(ojs_page(footer), encoding="utf-8")
+    (tmp_path / "search.json").write_text('{"text": "Open an issue"}', encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    assert files_holding(tmp_path, (needle,)) == []
+    # Whole in a cell's source is whole in the page, encoded or not, and the
+    # search index carries the source as plain text.
+    whole = f'const address = "{CONTACT_ADDRESS}";'
+    assert needle in ojs_sources(ojs_page(whole))[0]
+    (tmp_path / "about.html").write_text(ojs_page(whole), encoding="utf-8")
+    (tmp_path / "search.json").write_text(json.dumps({"text": whole}), encoding="utf-8")
+    assert files_holding(tmp_path, (needle,)) == ["about.html", "search.json"]
 
 
 def test_a_tip_says_which_currency_each_price_is_in():
