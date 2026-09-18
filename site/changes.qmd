@@ -7,6 +7,8 @@ title: "Changes"
 ```{ojs}
 //| output: false
 pageWantsDb = true
+// Every chart here counts the moves recorded in the station history.
+pageWantsHistory = true
 ```
 
 {{< include _controls.qmd >}}

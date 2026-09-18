@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "render.yml"
+TEST_WORKFLOW = ROOT / ".github" / "workflows" / "test.yml"
 VERIFY = ROOT / ".github" / "verify-site-data.py"
 
 SITE_ASSETS = {
@@ -31,6 +34,32 @@ SITE_ASSETS = {
 
 def read() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def step_script(name: str, **expressions: str) -> str:
+    """A render step's `run: |` block, as the script the runner would execute.
+
+    Each `${{ ... }}` the step reads is given as a keyword, its dots written as
+    underscores, so a test can run the step under the event it is about.
+    """
+    block = read().split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
+    body = block.split("        run: |\n", 1)[1]
+    script = textwrap.dedent(body)
+    for key, value in expressions.items():
+        script = script.replace("${{ " + key.replace("__", ".") + " }}", value)
+    assert "${{" not in script, "a step expression was left unset"
+    return script
+
+
+def run_step(script: str, cwd: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", script],
+        cwd=cwd,
+        env={**os.environ, **env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_render_conventions():
@@ -94,6 +123,37 @@ def test_render_stages_no_source_files_and_smoke_tests():
     assert "uv run python tests/smoke/smoke_site.py _site" in text
     assert "uses: actions/upload-pages-artifact@v5" in text
     assert "uses: actions/deploy-pages@v5" in text
+
+
+def test_staging_leaves_exactly_one_copy_of_the_data(tmp_path):
+    """Quarto copies the files the pages name into _site/data as it renders, so
+    by the time the stage step runs the directory exists, and `cp -R` into it
+    nested a second copy of all five at _site/data/data. Pages then served
+    history.parquet twice, and that is the file that grows without bound."""
+    for directory in (tmp_path / "site" / "data", tmp_path / "_site" / "data"):
+        directory.mkdir(parents=True)
+        for name in SITE_ASSETS:
+            (directory / name).write_bytes(f"{name} as verified".encode())
+    (tmp_path / "_site" / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    done = run_step(step_script("Stage _site"), tmp_path)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    staged = tmp_path / "_site" / "data"
+    assert not (staged / "data").exists()
+    assert {p.name for p in staged.iterdir()} == set(SITE_ASSETS)
+    for name in SITE_ASSETS:
+        assert (staged / name).read_bytes() == f"{name} as verified".encode()
+
+
+def test_the_pull_request_render_stages_the_data_the_same_way():
+    """The Test workflow's smoke job stages the sample data the way Render
+    stages the release, so it cannot pass on a layout Pages never gets."""
+    for path in (WORKFLOW, TEST_WORKFLOW):
+        text = path.read_text(encoding="utf-8")
+        copies = text.count("cp -R site/data _site/data")
+        assert copies == 1, path.name
+        assert text.count("rm -rf _site/data\n          cp -R site/data _site/data") == copies
 
 
 def test_render_deploys_only_from_the_default_branch():
@@ -216,3 +276,110 @@ def test_the_render_cron_does_not_land_inside_a_publish():
     # And it is actually on: the block ships commented out until the collector
     # has a `current` release to render, which is easy to leave that way.
     assert re.search(r'(?m)^  schedule:\n    - cron: "50 \*/3 \* \* \*"$', text)
+
+
+# A capture as the release's meta.json records it, and the same capture again
+# after a Rebuild rewrote its site assets: same capture_id, new built_at_utc.
+BUILT = b'{"built_at_utc":"2026-09-18T16:24:17Z","capture_id":"2026-09-18T1623Z"}\n'
+REBUILT = b'{"built_at_utc":"2026-09-18T19:02:40Z","capture_id":"2026-09-18T1623Z"}\n'
+NEXT = b'{"built_at_utc":"2026-09-18T22:24:09Z","capture_id":"2026-09-18T2217Z"}\n'
+
+# Stands in for curl against Pages: serves $LIVE_META, to the -o file or to
+# stdout, or fails the way `curl -f` does when there is nothing to fetch.
+FAKE_CURL = """#!/bin/sh
+[ -n "$LIVE_META" ] || exit 22
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$out" ]; then cp "$LIVE_META" "$out"; else cat "$LIVE_META"; fi
+"""
+
+
+def plan(tmp_path: Path, *, release: bytes, live: bytes | None, event: str = "schedule") -> str:
+    """Run the plan step against `release` with `live` on Pages; its decision."""
+    (tmp_path / "site" / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "site" / "data" / "meta.json").write_bytes(release)
+    tools = tmp_path / "bin"
+    tools.mkdir(exist_ok=True)
+    (tools / "curl").write_text(FAKE_CURL, encoding="utf-8")
+    (tools / "curl").chmod(0o755)
+    served = ""
+    if live is not None:
+        (tmp_path / "live.json").write_bytes(live)
+        served = str(tmp_path / "live.json")
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir(exist_ok=True)
+    output = tmp_path / "output"
+    output.write_text("", encoding="utf-8")
+    script = step_script(
+        "Decide whether to render",
+        steps__data__outputs__has_data="true",
+        github__event_name=event,
+    )
+    done = run_step(
+        script,
+        tmp_path,
+        PATH=f"{tools}{os.pathsep}{os.environ['PATH']}",
+        LIVE_META=served,
+        GITHUB_OUTPUT=str(output),
+        RUNNER_TEMP=str(runner_temp),
+        SITE_URL="https://pages.invalid/club-gas-prices",
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return output.read_text(encoding="utf-8").strip()
+
+
+def test_a_scheduled_run_skips_only_what_is_already_deployed(tmp_path):
+    assert plan(tmp_path, release=BUILT, live=BUILT) == "render=false"
+    assert plan(tmp_path, release=NEXT, live=BUILT) == "render=true"
+    # Nothing on Pages yet, or Pages unreachable: render rather than guess.
+    assert plan(tmp_path, release=BUILT, live=None) == "render=true"
+
+
+def test_a_rebuild_reaches_the_site_without_waiting_for_a_capture(tmp_path):
+    """A Rebuild rewrites the site assets under the capture they already had.
+    Compared on capture_id alone, every scheduled run called its corrections
+    deployed until the next capture landed, most of a day on a late schedule."""
+    assert plan(tmp_path, release=REBUILT, live=BUILT) == "render=true"
+
+
+def test_a_push_or_a_manual_run_always_renders(tmp_path):
+    for event in ("push", "workflow_dispatch"):
+        assert plan(tmp_path, release=BUILT, live=BUILT, event=event) == "render=true"
+
+
+def test_the_schedule_keeps_itself_on():
+    """GitHub turns off a public repository's schedules after 60 days without
+    activity, and nothing in this repository commits. Once a week a job
+    re-enables the workflow through the API, the way the widely used keepalive
+    actions do, with the one permission that needs and nothing else."""
+    text = read()
+    schedule = text.split("  schedule:\n", 1)[1].split("\n  push:\n", 1)[0]
+    crons = re.findall(r'(?m)^    - cron: "([^"]+)"$', schedule)
+    assert crons[0] == "50 */3 * * *"
+    jobs = text.split("\njobs:\n", 1)[1]
+    render_job, keepalive = jobs.split("\n  keepalive:\n", 1)
+    # Its own weekly tick, which is one of the crons and not the render's.
+    tick = re.search(r"github\.event\.schedule == '([^']+)'", keepalive).group(1)
+    assert tick in crons and tick != "50 */3 * * *"
+    assert "if: ${{ github.event_name == 'schedule' && github.event.schedule == " in keepalive
+    assert (
+        "run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/render.yml/enable"
+        in keepalive
+    )
+    assert "GH_TOKEN: ${{ github.token }}" in keepalive
+    # actions: write on this job alone: not the workflow, not the render job.
+    assert "    permissions:\n      actions: write\n" in keepalive
+    assert text.count("actions: write") == 1
+    assert "actions:" not in render_job
+    workflow_permissions = text.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
+    assert "actions" not in workflow_permissions
+    # The comment says what the call is, and what GitHub has not promised.
+    above = text.split("\n  keepalive:\n", 1)[0].rsplit("\n\n", 1)[1]
+    comment = " ".join(line.strip().removeprefix("# ") for line in above.splitlines())
+    assert "the widely used keepalive actions" in comment
+    assert "does not document the enable call as resetting the 60-day timer" in comment

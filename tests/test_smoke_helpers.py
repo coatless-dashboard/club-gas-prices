@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 # tests/smoke/ sits beside this file and is not an importable package, so the
 # directory itself goes on sys.path.
 SMOKE = Path(__file__).resolve().parent / "smoke"
 sys.path.insert(0, str(SMOKE))
 
+import smoke_site  # noqa: E402
 from smoke_site import (  # noqa: E402
     LIBRARY_HOSTS,
     PAGES,
@@ -22,8 +26,11 @@ from smoke_site import (  # noqa: E402
     expected_latest_stations,
     expected_marker_count,
     expected_usd_countries,
+    fetches_history,
+    freshness_cases,
     grade_table_problems,
     is_site_console_error,
+    launch_browser,
     parse_color,
     path_points,
     time_of_day_charts,
@@ -297,3 +304,129 @@ def test_a_key_must_carry_every_color_a_cell_is_drawn_in():
     # A cell color the key does not show, and no key at all.
     assert unexplained_colors(["#2a6f97", "#b3261e"], swatches) == ["#b3261e"]
     assert unexplained_colors(["#2a6f97"], []) == ["#2a6f97"]
+
+
+class FakeBrowser:
+    """A launched browser that can, or cannot, open a page and run a script."""
+
+    def __init__(self, name: str, works: bool = True) -> None:
+        self.name = name
+        self.works = works
+        self.closed = False
+
+    def new_page(self):
+        if not self.works:
+            raise RuntimeError("Target page, context or browser has been closed")
+        return SimpleNamespace(evaluate=lambda script: 2, close=lambda: None)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakePlaywright:
+    """Playwright on a runner whose Chrome is `chrome`: a working one, a broken
+    one, or none at all. The bundled Chromium launches once it is installed."""
+
+    def __init__(self, chrome: str) -> None:
+        self.chrome = chrome
+        self.launched: list[FakeBrowser] = []
+        self.chromium = SimpleNamespace(launch=self.launch)
+
+    def launch(self, channel: str | None = None, headless: bool = True) -> FakeBrowser:
+        if channel == "chrome":
+            if self.chrome == "missing":
+                raise RuntimeError("Chromium distribution 'chrome' is not found")
+            browser = FakeBrowser("chrome", works=self.chrome == "working")
+        else:
+            browser = FakeBrowser("chromium")
+        self.launched.append(browser)
+        return browser
+
+
+def fake_installer(monkeypatch, *, packages_install: bool) -> list[list[str]]:
+    """Stand in for `playwright install`; `--with-deps` fails unless told not to,
+    the way an apt install does on a release with a renamed package."""
+    calls: list[list[str]] = []
+
+    def run(command, check=False):
+        calls.append(command[3:])
+        if "--with-deps" in command and not packages_install:
+            raise subprocess.CalledProcessError(100, command)
+        return subprocess.CompletedProcess(command, 0)
+
+    fake = SimpleNamespace(run=run, CalledProcessError=subprocess.CalledProcessError)
+    monkeypatch.setattr(smoke_site, "subprocess", fake)
+    return calls
+
+
+def test_the_gate_uses_the_images_chrome_when_it_works(monkeypatch):
+    calls = fake_installer(monkeypatch, packages_install=True)
+    playwright = FakePlaywright("working")
+    assert launch_browser(playwright).name == "chrome"
+    assert calls == []
+
+
+def test_without_chrome_the_gate_installs_chromium(monkeypatch):
+    calls = fake_installer(monkeypatch, packages_install=True)
+    assert launch_browser(FakePlaywright("missing")).name == "chromium"
+    assert calls == [["install", "--with-deps", "chromium"]]
+
+
+def test_without_chrome_the_gate_still_runs_when_the_packages_will_not_install(monkeypatch):
+    """ubuntu-latest moves to a release this Playwright does not know. Its
+    package list can name a package that release renamed, which fails the whole
+    apt install; the browser alone still installs and still runs."""
+    calls = fake_installer(monkeypatch, packages_install=False)
+    assert launch_browser(FakePlaywright("missing")).name == "chromium"
+    assert calls == [["install", "--with-deps", "chromium"], ["install", "chromium"]]
+
+
+def test_a_chrome_that_starts_but_cannot_open_a_page_is_not_trusted(monkeypatch):
+    fake_installer(monkeypatch, packages_install=True)
+    playwright = FakePlaywright("broken")
+    assert launch_browser(playwright).name == "chromium"
+    chrome = playwright.launched[0]
+    assert chrome.name == "chrome" and chrome.closed
+
+
+def test_a_page_fetches_history_only_by_asking_for_the_file():
+    base = "http://127.0.0.1:8123/club-gas-prices/"
+    assert fetches_history([base + "compare.html", base + "data/history.parquet"])
+    assert not fetches_history([base + "data/summary_daily.parquet", base + "history.html"])
+
+
+NOW = datetime(2026, 9, 18, 16, 30, tzinfo=UTC)
+
+
+def test_the_freshness_cases_name_the_stale_chain_where_the_country_has_two(tmp_path: Path):
+    build(tmp_path)
+    meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
+    stations = json.loads((tmp_path / "stations.json").read_text(encoding="utf-8"))
+    (_, per_feed, said), (_, per_country, said_by_country), (_, fresh, said_fresh) = (
+        freshness_cases(meta, stations, NOW)
+    )
+    assert said == "Last successful capture over 12 h ago: United States · Sam's Club (30 h)."
+    assert per_feed["feeds"]["US-SAMS"]["last_success_capture_id"] == "2026-09-17T1030Z"
+    assert per_feed["feeds"]["US-COSTCO"]["last_success_capture_id"] == "2026-09-18T1530Z"
+    # The country block reads fresh, as the collector's roll-up would.
+    assert per_feed["countries"]["US"]["last_success_capture_id"] == "2026-09-18T1530Z"
+    # A chain with no station in the data, never captured: not to be named.
+    assert per_feed["feeds"]["US-ELSEWHERE"]["last_success_capture_id"] is None
+    # Without feeds, the country block is what goes stale.
+    assert "feeds" not in per_country
+    assert per_country["countries"]["US"]["last_success_capture_id"] == "2026-09-17T1030Z"
+    assert said_by_country == "Last successful capture over 12 h ago: United States (30 h)."
+    assert "US-ELSEWHERE" in fresh["feeds"]
+    assert said_fresh == "Every country was captured in the last 12 hours."
+    for _, served, _ in freshness_cases(meta, stations, NOW):
+        assert served["built_at_utc"] == "2026-09-18T16:30:00Z"
+
+
+def test_with_one_chain_the_freshness_cases_name_the_country_alone():
+    stations = [{"country": "US", "brand": "COSTCO"}, {"country": "CA", "brand": "COSTCO"}]
+    meta = {"stale_after_hours": 12, "countries": {}}
+    (_, per_feed, said), *_ = freshness_cases(meta, stations, NOW)
+    assert said == "Last successful capture over 12 h ago: United States (30 h)."
+    # Sam's Club is switched on and failing, and the data holds none of it.
+    assert per_feed["feeds"]["US-SAMS"]["status"] == "failed"
+    assert per_feed["feeds"]["US-COSTCO"]["last_success_capture_id"] == "2026-09-17T1030Z"

@@ -17,6 +17,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -29,6 +30,9 @@ from range_server import serve  # noqa: E402
 PREFIX = "/club-gas-prices/"
 # One document per view now, so a page is a URL rather than a tab pane.
 PAGES = ["index.html", "compare.html", "trends.html", "changes.html", "station.html", "about.html"]
+# The pages that query history.parquet. It is fetched whole and grows without
+# bound, so every other page has to leave it alone.
+HISTORY_PAGES = {"changes.html", "station.html"}
 # A phone: the width the audit found About scrolling sideways at, and Compare's
 # labels cut off.
 PHONE = {"width": 390, "height": 844}
@@ -193,6 +197,16 @@ GRADE_TABLE_JS = """() => {
   };
 }"""
 
+# The freshness notice at the top of every page, its whitespace folded.
+FRESHNESS_JS = """() => {
+  const el = document.querySelector(".cgp-controlbar .cgp-alert, .cgp-controlbar .cgp-notice");
+  return el ? el.textContent.replace(/\\s+/g, " ").trim() : null;
+}"""
+
+# The chains' names as the page gives them, for the freshness cases' labels.
+CHAIN_NAMES = {"COSTCO": "Costco", "SAMS": "Sam's Club"}
+PRIMARY_CHAIN = "COSTCO"
+
 # A tick label that names a time of day: "12 AM", "6 PM", "3:15".
 TIME_OF_DAY = re.compile(r"\b\d{1,2}(?::\d{2})? ?[AP]M\b|\b\d{1,2}:\d{2}\b")
 
@@ -307,6 +321,84 @@ def expected_latest_stations(summary_path: Path, grade: str) -> int:
         return 0
     newest = rows["capture_date"].max()
     return int(rows.filter(pl.col("capture_date") == newest)["n_stations"].sum())
+
+
+def fetches_history(urls: list[str]) -> bool:
+    """Whether a page asked for history.parquet among `urls`."""
+    return any(urlsplit(url).path.endswith("/data/history.parquet") for url in urls)
+
+
+def capture_id_of(when: datetime) -> str:
+    """A capture id as the collector writes one: `2026-09-18T1623Z`."""
+    return when.strftime("%Y-%m-%dT%H%MZ")
+
+
+def freshness_cases(meta: dict, stations: list[dict], now: datetime) -> list[tuple]:
+    """meta.json as the collector writes it with `feeds` and without, and what
+    the freshness notice has to say about each.
+
+    One United States chain last succeeded 30 hours ago and everything else an
+    hour ago. The country block takes the newest success across a country's
+    feeds, so it reads fresh; per feed, the notice names the country, and the
+    chain too wherever the United States has two. Without `feeds` the page
+    reads the country block as it always has. A feed of a chain the data holds
+    no station of is never named, however stale: the site names no chain it
+    shows nothing of. The cases are built from the stations served, so a
+    one-chain release and the two-chain sample each get the labels their own
+    page would draw.
+    """
+    window = meta.get("stale_after_hours") or 12
+    fresh = capture_id_of(now - timedelta(hours=1))
+    stale = capture_id_of(now - timedelta(hours=30))
+    pairs = sorted({(s["country"], s["brand"]) for s in stations if s.get("brand")})
+    us_chains = sorted(
+        {brand for country, brand in pairs if country == "US"},
+        key=lambda brand: (brand != PRIMARY_CHAIN, brand),
+    )
+    late = us_chains[-1]
+    absent = next(b for b in ("SAMS", "ELSEWHERE") if b not in {b for _, b in pairs})
+    countries = {
+        country: {"status": "ok", "last_success_capture_id": fresh}
+        for country in sorted({country for country, _ in pairs})
+    }
+
+    def feed(country: str, brand: str, last: str | None, status: str = "ok") -> dict:
+        return {
+            "country": country,
+            "brand": brand,
+            "status": status,
+            "last_success_capture_id": last,
+        }
+
+    feeds = {f"{c}-{b}": feed(c, b, stale if (c, b) == ("US", late) else fresh) for c, b in pairs}
+    # A chain switched on in the collector that has yet to post a price.
+    feeds[f"US-{absent}"] = feed("US", absent, None, status="failed")
+    all_fresh = {**feeds, f"US-{late}": feed("US", late, fresh)}
+    built = {**meta, "built_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    by_country = {key: value for key, value in built.items() if key != "feeds"}
+
+    named = len(us_chains) > 1 or late != PRIMARY_CHAIN
+    label = "United States" + (f" · {CHAIN_NAMES.get(late, late)}" if named else "")
+    over = f"Last successful capture over {window} h ago: {{}} (30 h)."
+    return [
+        ("per feed", {**built, "countries": countries, "feeds": feeds}, over.format(label)),
+        (
+            "per country",
+            {
+                **by_country,
+                "countries": {
+                    **countries,
+                    "US": {**countries["US"], "last_success_capture_id": stale},
+                },
+            },
+            over.format("United States"),
+        ),
+        (
+            "every feed fresh",
+            {**built, "countries": countries, "feeds": all_fresh},
+            f"Every country was captured in the last {window} hours.",
+        ),
+    ]
 
 
 def path_points(d: str) -> list[tuple[float, float]] | None:
@@ -884,6 +976,45 @@ def open_page(browser, viewport: dict, collected: dict, origin: str, *, scheme: 
     return page
 
 
+def history_fetch_check(page_name: str, urls: list[str], failures: Failures, step: str) -> None:
+    """Only the pages that query history.parquet download it."""
+    wanted = page_name in HISTORY_PAGES
+    if fetches_history(urls) != wanted:
+        verb = "never downloaded" if wanted else "downloaded"
+        failures.add(f"{step}: {verb} history.parquet")
+    else:
+        print(f"{step}: ok, history.parquet {'loaded' if wanted else 'left alone'}", flush=True)
+
+
+def serving(body: str):
+    """A route handler that answers with `body` as JSON. Playwright passes a
+    handler the request as well when it takes a second argument, so this one
+    takes only the route."""
+    return lambda route: route.fulfill(status=200, content_type="application/json", body=body)
+
+
+def freshness_steps(browser, base_url: str, meta: dict, stations: list[dict], failures, collected):
+    """The freshness notice, read off meta.json with feeds and without.
+
+    The release's own meta.json says whatever its capture says, so each case
+    serves a meta.json of its own in its place and reads the notice back.
+    """
+    origin = base_url[: base_url.index(PREFIX)]
+    for name, served, expected in freshness_cases(meta, stations, datetime.now(UTC)):
+        step = f"step 7 freshness, {name}"
+        page = open_page(browser, {"width": 1400, "height": 1000}, collected, origin)
+        page.route("**/data/meta.json", serving(json.dumps(served)))
+        page.goto(base_url + "about.html", wait_until="load")
+        wait_idle(page, failures, step)
+        said = page.evaluate(FRESHNESS_JS)
+        if said != expected:
+            failures.add(f"{step}: the notice reads {said!r}, not {expected!r}")
+        else:
+            print(f"{step}: ok, {said!r}", flush=True)
+        check_clean(page, failures, step, collected)
+        page.close()
+
+
 def phone_steps(page, base_url: str, first_key: str, failures: Failures, collected) -> None:
     """Every page at a phone's width: nothing scrolls sideways, every chart label
     is drawn whole and every caption sits over its options. Most of the map is
@@ -931,16 +1062,44 @@ def phone_steps(page, base_url: str, first_key: str, failures: Failures, collect
         check_clean(page, failures, step, collected)
 
 
-def launch_browser(playwright, *, headed: bool = False):
+def working(browser):
+    """`browser`, once it has opened a page and run a script in it.
+
+    A browser can start and still be unable to do either, and a gate that
+    trusted it would fail every page instead of falling back.
+    """
     try:
-        return playwright.chromium.launch(channel="chrome", headless=not headed)
+        page = browser.new_page()
+        if page.evaluate("1 + 1") != 2:
+            raise RuntimeError("the browser could not run a script")
+        page.close()
+    except Exception:
+        browser.close()
+        raise
+    return browser
+
+
+def launch_browser(playwright, *, headed: bool = False):
+    """The runner image's Google Chrome, or Playwright's own Chromium without it.
+
+    A runner-image roll is what takes Chrome away or breaks it, and a new image
+    is also where `--with-deps` is likeliest to fail: it installs system packages
+    by name from a list per Ubuntu release, and on a release newer than this
+    Playwright knows, one renamed package fails the whole apt install. The image
+    has shipped a browser, and with it most of what Chromium links against, so
+    the browser alone is worth a try before the gate gives up.
+    """
+    try:
+        return working(playwright.chromium.launch(channel="chrome", headless=not headed))
     except Exception as exc:
         print(f"::notice::Google Chrome unavailable ({exc}); installing Playwright chromium")
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
-            check=True,
-        )
-        return playwright.chromium.launch(headless=not headed)
+    install = [sys.executable, "-m", "playwright", "install"]
+    try:
+        subprocess.run([*install, "--with-deps", "chromium"], check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"::warning::Chromium's system packages did not install ({exc}); trying without them")
+        subprocess.run([*install, "chromium"], check=True)
+    return playwright.chromium.launch(headless=not headed)
 
 
 def main() -> int:
@@ -957,6 +1116,7 @@ def main() -> int:
     if not latest:
         raise SystemExit(f"{site_dir}/data/latest.json has no stations")
     meta = json.loads((site_dir / "data" / "meta.json").read_text(encoding="utf-8"))
+    stations = json.loads((site_dir / "data" / "stations.json").read_text(encoding="utf-8"))
     first_key = latest[0]["station_key"]
 
     # Served the way Pages serves: gzipped, with ranges over the compressed
@@ -1012,8 +1172,16 @@ def main() -> int:
             )
             for name in PAGES:
                 page_id = name.removesuffix(".html")
+                requested: list[str] = []
+
+                def note(request, requested=requested):
+                    requested.append(request.url)
+
+                page.on("request", note)
                 page.goto(base_url + name, wait_until="load")
                 wait_idle(page, failures, f"step 2 {page_id}")
+                page.remove_listener("request", note)
+                history_fetch_check(name, requested, failures, f"step 2 {page_id}")
                 if page_id == "compare":
                     plot_check(page, failures, "step 2 compare", COMPARE_DOTS, countries, "dots")
                 elif page_id == "trends":
@@ -1026,6 +1194,18 @@ def main() -> int:
                 chart_text_check(page, failures, f"step 2 {page_id}")
                 chart_scale_check(page, failures, f"step 2 {page_id}")
                 check_clean(page, failures, f"step 2 {page_id}", collected)
+
+            # Step 2b: a station in the query string of a page that queries the
+            # release but never loads history. The station's history query is
+            # one of the shared cells, so it runs there too, and would ask for a
+            # table the page never registered.
+            for name in ("compare.html", "trends.html"):
+                step = f"step 2b {name}?station="
+                page.goto(
+                    f"{base_url}{name}?station={quote(first_key, safe='')}", wait_until="load"
+                )
+                wait_idle(page, failures, step)
+                check_clean(page, failures, step, collected)
 
             # Step 2c: hovering a chart has to raise a tip. The tip mark is easy
             # to render and hard to notice missing, and a helper defined in the
@@ -1220,6 +1400,9 @@ def main() -> int:
             # Step 6: a phone.
             phone = open_page(browser, PHONE, collected, origin)
             phone_steps(phone, base_url, first_key, failures, collected)
+
+            # Step 7: the freshness notice, per feed and per country.
+            freshness_steps(browser, base_url, meta, stations, failures, collected)
 
             browser.close()
     finally:

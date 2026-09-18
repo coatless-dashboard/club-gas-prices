@@ -45,7 +45,7 @@ with a size and sha256 for each in `manifest.json`:
 
 | Asset | Becomes | What it holds |
 |---|---|---|
-| `site-meta.json` | `data/meta.json` | The capture id, per-country status, the grade table, the notices, the basemap and the release links |
+| `site-meta.json` | `data/meta.json` | The capture id, per-country and per-feed status, the grade table, the notices, the basemap and the release links |
 | `site-latest.json` | `data/latest.json` | One record per station with coordinates: its current price per grade |
 | `site-stations.json` | `data/stations.json` | Every station ever seen, active or closed, with its address and identifiers |
 | `site-summary-daily.parquet` | `data/summary_daily.parquet` | Daily medians and quartiles by country, chain and region |
@@ -56,9 +56,16 @@ Nothing in this repository computes a price, so a rendered page can only be as f
 the release it was built from — `meta.json` carries the capture id and the page says so.
 
 A `GITHUB_TOKEN` cannot start a workflow in another repository, so Render polls rather
-than being pushed to, and skips a scheduled run whose capture is already deployed.
-Reading a public repository's releases needs no credential, which is the reason to poll
-here rather than hold a token issued by the other repository.
+than being pushed to, and skips a scheduled run whose `meta.json` is already deployed
+byte for byte. That file is rebuilt with the rest, so a Rebuild's corrections go out on
+the next run rather than waiting for the next capture. Reading a public repository's
+releases needs no credential, which is the reason to poll here rather than hold a token
+issued by the other repository.
+
+GitHub turns off a public repository's schedules after 60 days without activity, and
+nothing in this repository commits. Once a week Render re-enables its own workflow
+through the API, as the common keepalive actions do; GitHub does not document that
+call as resetting the 60 days.
 
 ## Running it locally
 
@@ -88,7 +95,7 @@ uv run ruff check && uv run ruff format --check
 The smoke test drives the built site with Playwright and is not part of `pytest`:
 
 ```bash
-quarto render site && cp -R site/data _site/data
+quarto render site && rm -rf _site/data && cp -R site/data _site/data
 uv sync --group smoke && uv run playwright install chromium
 uv run python tests/smoke/smoke_site.py _site
 ```
@@ -99,7 +106,7 @@ uv run python tests/smoke/smoke_site.py _site
 |---|---|
 | `site/` | The Quarto website. `_shared.qmd` holds every helper and cell the pages share; `_controls.qmd` the control bar; `_footer.qmd` the notice. One `.qmd` per page. |
 | `site/custom.scss`, `site/dark.scss` | Theme, control styling and the map chrome that follows Quarto's light/dark toggle. |
-| `.github/workflows/render.yml` | Fetch the release, verify, render, smoke test, deploy to Pages. |
+| `.github/workflows/render.yml` | Fetch the release, verify, render, smoke test, deploy to Pages; once a week, re-enable its own schedule. |
 | `.github/workflows/test.yml` | Lint, `pytest`, and a full render and smoke test against the sample data on every push and pull request. |
 | `.github/verify-site-data.py` | Checks a download against `manifest.json` and unprefixes it. |
 | `tests/fixtures/site_sample.py` | The local sample data. |
@@ -112,11 +119,12 @@ code that produces them lives there:
 
 - `.github/verify-site-data.py` names the five assets — `club_gas.sitedata.SITE_ASSETS`.
 - `tests/test_site_sample.py` names the parquet columns the pages query —
-  `club_gas.sitedata.HISTORY_COLUMNS` and `SUMMARY_COLUMNS`.
+  `club_gas.sitedata.HISTORY_COLUMNS` and `SUMMARY_COLUMNS` — and the fields of
+  `meta.json`, as `club_gas.sitedata._meta` writes them.
 
-Both are commented as such on both sides. A column added there without a change here
-renders a page against a shape it never receives, and `test_site_sample.py` is what
-fails first.
+The asset names and the parquet columns are commented as such on both sides. A column
+or field added there without a change here renders a page against a shape it never
+receives, and `test_site_sample.py` is what fails first.
 
 ## License
 

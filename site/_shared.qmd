@@ -114,6 +114,11 @@ palette = {
 //
 // FileAttachment is called with a literal both times on purpose: Quarto
 // resolves those paths when it renders, and a computed one 404s.
+//
+// history.parquet is fetched whole, for the reason above, and it is the file
+// that grows without bound. So only a page that queries it -- Changes and
+// Station, declared by pageWantsHistory -- downloads it; on Compare and
+// Trends the table is simply not registered.
 db = {
   if (!pageWantsDb) return null;
   const buffered = async (file, name) => {
@@ -132,11 +137,13 @@ db = {
   };
   const [summary_daily, history] = await Promise.all([
     buffered(FileAttachment("data/summary_daily.parquet"), "summary_daily.parquet"),
-    buffered(FileAttachment("data/history.parquet"), "history.parquet")
+    pageWantsHistory
+      ? buffered(FileAttachment("data/history.parquet"), "history.parquet")
+      : null
   ]);
   return DuckDBClient.of({
     summary_daily,
-    history,
+    ...(history ? {history} : {}),
     // The array already fetched for the map, projected to the three columns
     // SQL needs. Registering the FileAttachment instead would download
     // stations.json a second time.
@@ -445,6 +452,39 @@ currencyOf = {
 staleAfterHours = {
   const value = Number(meta.stale_after_hours);
   return Number.isFinite(value) && value > 0 ? value : 12;
+}
+
+// What the freshness notice checks, each under the name it gives it. The
+// country block takes the newest success across a country's feeds, so with
+// two chains in one country one of them could stop for days while the country
+// still read fresh. Where meta.json lists its feeds, each is checked on its
+// own and named the way every chart names a chain: by country, and by chain
+// too where the country has two. A feed of a chain the data holds no station
+// of is left out, because the site names no chain it shows nothing of. A
+// meta.json that lists no feeds is read by country, as it always was.
+freshnessSources = {
+  const feeds = Object.values(meta.feeds || {});
+  if (!feeds.length) {
+    const sources = [];
+    for (const code of COUNTRY_ORDER) {
+      const entry = meta.countries ? meta.countries[code] : null;
+      if (!entry) continue;
+      sources.push({label: COUNTRY_NAMES[code], captureId: entry.last_success_capture_id});
+    }
+    return sources;
+  }
+  const shown = new Set(stationsAll.map((station) => station.brand).filter(Boolean));
+  const kept = feeds.filter((feed) => shown.has(feed.brand));
+  const chains = chainsByCountry(kept);
+  return COUNTRY_ORDER.flatMap((code) =>
+    kept
+      .filter((feed) => feed.country === code)
+      .sort((a, b) => chainOrder(a.brand, b.brand))
+      .map((feed) => ({
+        label: seriesLabel(code, feed.brand, chains),
+        captureId: feed.last_success_capture_id
+      }))
+  );
 }
 ```
 
@@ -1237,8 +1277,10 @@ nearestStations = {
     .slice(0, 5);
 }
 
+// A `?station=` on a page that never loaded history would otherwise query a
+// table that page never registered.
 stationHistoryRows = {
-  if (!db || !selectedMeta) return [];
+  if (!db || !pageWantsHistory || !selectedMeta) return [];
   const keys = [selectedMeta.station_key, ...nearestStations.map((row) => row.station_key)];
   return db.query(`
     SELECT station_key,

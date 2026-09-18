@@ -10,6 +10,8 @@ title: "Station"
 // pay for it. This replaced a MutationObserver that watched which tab
 // pane was active, which a multi-page site has no need of.
 pageWantsDb = true
+// The price history and the change list are read from the station history.
+pageWantsHistory = true
 ```
 
 {{< include _controls.qmd >}}

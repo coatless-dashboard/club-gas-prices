@@ -64,6 +64,8 @@ def test_every_page_pulls_in_the_shared_cells_and_the_controls():
         assert "{{< include _shared.qmd >}}" in text, name
         assert "{{< include _controls.qmd >}}" in text, name
         assert "pageWantsDb = " in text, name
+        # Every page, because the shared db cell reads it on every page.
+        assert "pageWantsHistory = " in text, name
 
 
 def test_exactly_one_duckdb_client_is_created():
@@ -118,6 +120,53 @@ def test_only_the_pages_that_query_load_duckdb():
         "station.qmd": True,
         "about.qmd": False,
     }
+
+
+def test_only_the_pages_that_query_history_download_it():
+    """history.parquet is fetched whole and grows without bound, and Compare and
+    Trends downloaded it on every view without ever querying it."""
+    wants = {
+        name: "pageWantsHistory = true" in (SITE / name).read_text(encoding="utf-8")
+        for name in PAGES
+    }
+    assert wants == {
+        "index.qmd": False,
+        "compare.qmd": False,
+        "trends.qmd": False,
+        "changes.qmd": True,
+        "station.qmd": True,
+        "about.qmd": False,
+    }
+    # A page that queries history itself says so.
+    for name in PAGES:
+        if "FROM history" in (SITE / name).read_text(encoding="utf-8"):
+            assert wants[name], name
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    db = shared.split("\ndb = {\n", 1)[1].split("\n}\n", 1)[0]
+    loads = db.split('buffered(FileAttachment("data/history.parquet")', 1)[0]
+    assert loads.rstrip().endswith("pageWantsHistory\n      ?"), loads[-80:]
+    assert "...(history ? {history} : {})," in db
+    # The one history query in the shared cells runs on every page, so it stands
+    # down where the table was never registered.
+    query = shared.split("stationHistoryRows = {", 1)[1].split("\n}\n", 1)[0]
+    assert "if (!db || !pageWantsHistory || !selectedMeta) return [];" in query
+
+
+def test_the_freshness_notice_reads_each_feed_and_falls_back_to_countries():
+    """The country block takes the newest success across a country's feeds, so
+    with two chains one could stop for days while its country read fresh."""
+    text = read_qmd()
+    sources = text.split("freshnessSources = {", 1)[1].split("\n}\n", 1)[0]
+    assert "Object.values(meta.feeds || {})" in sources
+    # Named by the rule every chart names a chain by.
+    assert "seriesLabel(code, feed.brand, chains)" in sources
+    # A chain the data holds no station of is never named.
+    assert "shown.has(feed.brand)" in sources
+    # Without feeds, the country block exactly as before.
+    assert "const entry = meta.countries ? meta.countries[code] : null;" in sources
+    notice = text.split("freshnessNotice = {", 1)[1].split("\n}\n", 1)[0]
+    assert "for (const {label, captureId} of freshnessSources)" in notice
+    assert "meta.countries" not in notice
 
 
 def test_the_freshness_notice_uses_the_window_from_meta():

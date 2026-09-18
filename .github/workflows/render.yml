@@ -10,6 +10,9 @@ on:
   # ~90 minute average freshness a :20 offset would give.
   schedule:
     - cron: "50 */3 * * *"
+    # Once a week, off the three-hour grid: the tick the keepalive job answers.
+    # The render runs on it too, the same as on any other scheduled tick.
+    - cron: "50 1 * * 1"
   push:
     branches: [main]
     paths:
@@ -34,8 +37,10 @@ env:
 jobs:
   render:
     name: Render
-    # The smoke step drives this image's preinstalled Google Chrome, so if a
-    # runner-image roll ever breaks the deploy gate, start looking here.
+    # The smoke step drives this image's preinstalled Google Chrome, and falls
+    # back to Playwright's own Chromium when Chrome is missing or will not
+    # start. If a runner-image roll ever breaks the deploy gate, start looking
+    # here.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -74,7 +79,7 @@ jobs:
           echo "::error::${DATA_REPO} current never became consistent"
           exit 1
 
-      # A scheduled run that would redeploy the capture already on Pages is not
+      # A scheduled run that would redeploy the data already on Pages is not
       # worth a render. A push or a manual run always renders, because there it
       # is the site source, not the data, that changed.
       - name: Decide whether to render
@@ -89,11 +94,16 @@ jobs:
             echo "render=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # The whole of meta.json, not only its capture_id. A Rebuild rewrites
+          # the site assets under the capture they already had, and only
+          # built_at_utc changes to say so. Compared on the capture alone, its
+          # corrections stayed off the site until the next capture landed.
+          # Pages serves the file byte for byte as it was staged.
           built="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["capture_id"] or "")' site/data/meta.json)"
-          live="$(curl -fsSL --max-time 30 "${SITE_URL}/data/meta.json" \
-            | python3 -c 'import json,sys;print(json.load(sys.stdin).get("capture_id") or "")' || true)"
-          if [ -n "$live" ] && [ "$built" = "$live" ]; then
-            echo "::notice::capture ${built} is already deployed"
+          live="${RUNNER_TEMP}/live-meta.json"
+          if curl -fsSL --max-time 30 -o "$live" "${SITE_URL}/data/meta.json" \
+            && cmp -s site/data/meta.json "$live"; then
+            echo "::notice::this build of capture ${built} is already deployed"
             echo "render=false" >> "$GITHUB_OUTPUT"
           else
             echo "render=true" >> "$GITHUB_OUTPUT"
@@ -114,7 +124,11 @@ jobs:
         run: |
           set -euo pipefail
           # The project writes straight into _site, so staging is only the data
-          # the pages fetch at runtime plus the leak check.
+          # the pages fetch at runtime plus the leak check. Quarto has already
+          # copied the files the pages name, so _site/data exists by now, and
+          # `cp -R` into it nested a second copy of everything at data/data.
+          # Replacing it leaves exactly the verified download.
+          rm -rf _site/data
           cp -R site/data _site/data
           leaked="$(find _site \( -name '*.qmd' -o -name '*.scss' \) -print)"
           if [ -n "$leaked" ]; then
@@ -147,3 +161,27 @@ jobs:
         id: deploy
         if: ${{ steps.plan.outputs.render == 'true' }}
         uses: actions/deploy-pages@v5
+
+  # GitHub turns off a public repository's scheduled workflows after 60 days
+  # without repository activity, and nothing here makes any: the render reads
+  # another repository and deploys to Pages, and never commits. So once a week
+  # this re-enables its own workflow through the API, which is the approach the
+  # widely used keepalive actions (liskin/gh-workflow-keepalive among them)
+  # take instead of pushing empty commits. GitHub does not document the enable
+  # call as resetting the 60-day timer, only as setting the workflow active, so
+  # this is the common practice rather than a guarantee.
+  keepalive:
+    name: Keep the schedule on
+    if: ${{ github.event_name == 'schedule' && github.event.schedule == '50 1 * * 1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The one write this workflow needs outside Pages, so it is granted to this
+    # job alone and replaces the workflow's permissions here rather than adding
+    # to them.
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Re-enable this workflow
+        run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/render.yml/enable

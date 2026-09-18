@@ -10,6 +10,7 @@ title: "About"
 // pay for it. This replaced a MutationObserver that watched which tab
 // pane was active, which a multi-page site has no need of.
 pageWantsDb = false
+pageWantsHistory = false
 ```
 
 {{< include _controls.qmd >}}

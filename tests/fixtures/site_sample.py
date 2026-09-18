@@ -61,11 +61,19 @@ UNITS_PER_USD = {
 }
 FX_RATE_DATE = "2026-09-14"
 
-NOTICE = (
-    "Unofficial. Not affiliated with, endorsed by, or connected to Costco Wholesale "
-    "Corporation. Prices are collected from Costco's public websites and may differ "
-    "from the price at the pump."
+# config/site.toml in the data repository, as it stands on 2026-09-18. meta.json's
+# `notice` is this prefix and then one clause per chain in the data, as a list.
+NOTICE_PREFIX = (
+    "Unofficial. Prices are collected from public websites and may differ from the price "
+    "at the pump."
 )
+NOTICES = {
+    "COSTCO": "Not affiliated with, endorsed by, or connected to Costco Wholesale Corporation.",
+    "SAMS": (
+        "Not affiliated with, endorsed by, or connected to Sam's West, Inc., Sam's Club, "
+        "or Walmart Inc."
+    ),
+}
 
 RELEASE_DL = "https://github.com/coatless-data/club-gas-prices/releases/download/current/"
 
@@ -244,6 +252,26 @@ def grade_table(brands: set[str]) -> list[dict]:
     return rows
 
 
+def notice(brands: set[str]) -> list[str]:
+    """meta.json's `notice`, as club_gas.config builds it: the chains in the data only."""
+    return [NOTICE_PREFIX, *(NOTICES[brand] for brand in sorted(brands) if brand in NOTICES)]
+
+
+def feeds(stations: list[dict], capture_id: str) -> dict:
+    """meta.json's `feeds`: one per chain in each country, keyed and sorted as
+    club_gas.sitedata writes them. The sample's feeds all ran in its capture."""
+    pairs = sorted({(station["country"], station["brand"]) for station in stations})
+    return {
+        f"{country}-{brand}": {
+            "country": country,
+            "brand": brand,
+            "status": "ok",
+            "last_success_capture_id": capture_id,
+        }
+        for country, brand in pairs
+    }
+
+
 def parse_price(raw: str) -> float:
     cleaned = raw.strip().replace("NT$", "").replace("$", "").replace("¥", "")
     cleaned = cleaned.replace("£", "").replace(",", "")
@@ -420,14 +448,24 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
     )
     summary.write_parquet(out_dir / "summary_daily.parquet", statistics=True)
 
+    # The shape club_gas.sitedata._meta writes, key for key and in its order.
+    capture_id = "2026-09-15T1817Z"
+    brands = {station["brand"] for station in STATIONS}
     meta = {
         "built_at_utc": "2026-09-15T18:30:00Z",
-        "capture_id": "2026-09-15T1817Z",
+        "capture_id": capture_id,
         "countries": {
-            station["country"]: {"last_success_capture_id": "2026-09-15T1817Z", "status": "ok"}
-            for station in STATIONS
+            country: {"status": "ok", "last_success_capture_id": capture_id}
+            for country in sorted({station["country"] for station in STATIONS})
         },
-        "grades": grade_table({station["brand"] for station in STATIONS}),
+        "feeds": feeds(STATIONS, capture_id),
+        "closed_months": [],
+        "closed_years": [],
+        "grades": grade_table(brands),
+        "notice": notice(brands),
+        # The page calls a country, or a chain in it, stale after this many hours
+        # without a capture.
+        "stale_after_hours": 12,
         "releases": {
             "current": ("https://github.com/coatless-data/club-gas-prices/releases/tag/current"),
             "all": "https://github.com/coatless-data/club-gas-prices/releases",
@@ -441,9 +479,6 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
             "stations_csv": RELEASE_DL + "stations.csv",
             "fx_csv": RELEASE_DL + "fx.csv",
         },
-        "notice": NOTICE,
-        # The page calls a country stale after this many hours without a capture.
-        "stale_after_hours": 12,
         "basemap": {
             "provider": "osm",
             "light_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -452,8 +487,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
             "max_zoom": 19,
             "dark_filter": True,
             "attribution": (
-                '&copy; <a href="https://www.openstreetmap.org/copyright">'
-                "OpenStreetMap contributors</a>"
+                '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
             ),
         },
     }

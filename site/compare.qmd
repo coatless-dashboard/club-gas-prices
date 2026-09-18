@@ -10,6 +10,9 @@ title: "Compare"
 // pay for it. This replaced a MutationObserver that watched which tab
 // pane was active, which a multi-page site has no need of.
 pageWantsDb = true
+// Compare reads the daily summaries only, so it never downloads the station
+// history, the one file that grows without bound.
+pageWantsHistory = false
 ```
 
 {{< include _controls.qmd >}}

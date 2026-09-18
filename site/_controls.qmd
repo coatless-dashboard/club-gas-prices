@@ -36,16 +36,15 @@ freshnessNotice = {
     items.push(`This site has not updated since ${meta.built_at_utc}.`);
   }
   const stale = [];
-  for (const code of COUNTRY_ORDER) {
-    const entry = meta.countries ? meta.countries[code] : null;
-    if (!entry) continue;
-    const when = captureIdToDate(entry.last_success_capture_id);
+  // Each chain's feed where meta.json lists them, each country where not.
+  for (const {label, captureId} of freshnessSources) {
+    const when = captureIdToDate(captureId);
     if (!when) {
-      stale.push(`${COUNTRY_NAMES[code]} (never)`);
+      stale.push(`${label} (never)`);
       continue;
     }
     const age = (now.getTime() - when.getTime()) / 3600000;
-    if (age > staleAfterHours) stale.push(`${COUNTRY_NAMES[code]} (${Math.floor(age)} h)`);
+    if (age > staleAfterHours) stale.push(`${label} (${Math.floor(age)} h)`);
   }
   if (stale.length) {
     items.push(

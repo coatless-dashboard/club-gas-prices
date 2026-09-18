@@ -74,6 +74,9 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
+          # Quarto has already copied the files the pages name into _site/data,
+          # so this replaces it rather than nesting a second copy inside it.
+          rm -rf _site/data
           cp -R site/data _site/data
           uv sync --locked --group smoke
           uv run python tests/smoke/smoke_site.py _site

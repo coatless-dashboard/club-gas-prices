@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 import polars as pl
 
+ROOT = Path(__file__).resolve().parents[1]
+SITE = ROOT / "site"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(FIXTURES))
 
-from site_sample import build, grade_table  # noqa: E402
+from site_sample import build, grade_table, notice  # noqa: E402
 
 SUMMARY_COLUMNS = [
     "capture_date",
@@ -59,6 +62,68 @@ GRADE_FIELDS = [
     "spec_source",
     "spec_source_url",
 ]
+
+
+# meta.json itself, key for key and in order, as club_gas.sitedata._meta writes
+# it: the release of 2026-09-18 plus the per-feed `feeds` block the collector
+# publishes beside `countries`. Restated for the same reason as the lists above.
+META_FIELDS = [
+    "built_at_utc",
+    "capture_id",
+    "countries",
+    "feeds",
+    "closed_months",
+    "closed_years",
+    "grades",
+    "notice",
+    "stale_after_hours",
+    "releases",
+    "basemap",
+]
+COUNTRY_FIELDS = ["status", "last_success_capture_id"]
+FEED_FIELDS = ["country", "brand", "status", "last_success_capture_id"]
+RELEASE_FIELDS = [
+    "current",
+    "all",
+    "all_parquet",
+    "all_csv_gz",
+    "all_captures_parquet",
+    "latest_csv",
+    "stations_csv",
+    "fx_csv",
+]
+BASEMAP_FIELDS = [
+    "provider",
+    "light_url",
+    "dark_url",
+    "subdomains",
+    "max_zoom",
+    "dark_filter",
+    "attribution",
+]
+
+
+def site_source() -> str:
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(SITE.glob("*.qmd")))
+
+
+def cell(name: str) -> str:
+    """The body of the OJS block cell `name = {`, to its closing brace."""
+    return site_source().split(f"\n{name} = {{\n", 1)[1].split("\n}\n", 1)[0]
+
+
+def meta_reads() -> dict[str, set[str]]:
+    """Every field the pages read off meta.json, with the fields they read under it."""
+    # Five helpers call a station's record `meta`; what they read is the
+    # station's, so their bodies are left out.
+    text = re.sub(r"(?ms)^function \w+\(meta\) \{\n.*?^\}\n", "", site_source())
+    reads: dict[str, set[str]] = {}
+    # `meta.json` is the file's name, in paths and in prose, not a field.
+    for field, under in re.findall(r"\bmeta\.(?!json\b)(\w+)(?:\.(\w+))?", text):
+        reads.setdefault(field, set()).update({under} - {""})
+    # The map reads its tile layers through `const basemap = meta.basemap`.
+    reads["basemap"].update(re.findall(r"\bbasemap\.(\w+)", text))
+    return reads
 
 
 def test_build_writes_the_five_files(tmp_path: Path):
@@ -131,7 +196,7 @@ def test_meta_carries_the_basemap_and_the_grade_table(tmp_path: Path):
     assert meta["releases"]["current"].endswith("/releases/tag/current")
     assert meta["releases"]["all"].endswith("/releases")
     assert meta["stale_after_hours"] == 12
-    assert meta["notice"].startswith("Unofficial.")
+    assert meta["notice"][0].startswith("Unofficial.")
     assert {row["country"] for row in meta["grades"]} == {"US", "CA", "MX", "GB", "AU", "JP", "TW"}
 
 
@@ -158,3 +223,56 @@ def test_a_chain_with_no_prices_has_no_grade_rows():
     # off its six labels are not on the About page either.
     assert {row["brand"] for row in grade_table({"COSTCO"})} == {"COSTCO"}
     assert len(grade_table({"COSTCO", "SAMS"})) == len(grade_table({"COSTCO"})) + 6
+
+
+def test_meta_has_the_shape_the_collector_writes(tmp_path: Path):
+    """The sample's meta.json said its notice as one string where the release
+    says a list, and carried nothing per feed. A page written against the
+    sample could pass every test here and still break on the real file."""
+    build(tmp_path)
+    meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
+    stations = json.loads((tmp_path / "stations.json").read_text(encoding="utf-8"))
+    assert list(meta) == META_FIELDS
+    assert list(meta["countries"]) == sorted(meta["countries"])
+    for entry in meta["countries"].values():
+        assert list(entry) == COUNTRY_FIELDS, entry
+    # One feed per chain in each country, keyed `<COUNTRY>-<BRAND>` and sorted.
+    assert list(meta["feeds"]) == sorted(meta["feeds"])
+    for feed_id, feed in meta["feeds"].items():
+        assert list(feed) == FEED_FIELDS, feed
+        assert feed_id == f"{feed['country']}-{feed['brand']}"
+    assert {(f["country"], f["brand"]) for f in meta["feeds"].values()} == {
+        (s["country"], s["brand"]) for s in stations
+    }
+    assert list(meta["releases"]) == RELEASE_FIELDS
+    assert list(meta["basemap"]) == BASEMAP_FIELDS
+    # The notice is a list: the shared prefix, then one line per chain in the data.
+    assert all(isinstance(line, str) for line in meta["notice"])
+    assert meta["notice"] == notice({s["brand"] for s in stations})
+    assert len(meta["notice"]) == 1 + len({s["brand"] for s in stations})
+
+
+def test_the_notice_names_only_the_chains_in_the_data():
+    assert not any("Sam's" in line for line in notice({"COSTCO"}))
+    assert any("Costco" in line for line in notice({"COSTCO"}))
+    assert len(notice({"COSTCO", "SAMS"})) == 3
+
+
+def test_every_meta_field_a_page_reads_is_one_the_release_and_the_sample_carry(tmp_path: Path):
+    """A page that reads a field the collector does not write draws nothing, or
+    worse, and a sample without the field lets it pass the smoke test."""
+    build(tmp_path)
+    meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
+    reads = meta_reads()
+    # The scan finds what the pages are known to read, so it is not vacuous.
+    assert {"built_at_utc", "countries", "feeds", "notice", "grades", "basemap"} <= set(reads)
+    assert set(reads) <= set(META_FIELDS), sorted(set(reads) - set(META_FIELDS))
+    assert set(reads) <= set(meta), sorted(set(reads) - set(meta))
+    for field, under in reads.items():
+        assert under <= set(meta[field] if isinstance(meta[field], dict) else ()), field
+    # And under them: a feed, a country's entry and a grade row.
+    sources = cell("freshnessSources")
+    assert set(re.findall(r"\bfeed\.(\w+)", sources)) <= set(FEED_FIELDS)
+    assert set(re.findall(r"\bentry\.(\w+)", sources)) <= set(COUNTRY_FIELDS)
+    grades = cell("aboutGrades")
+    assert set(re.findall(r"\brow\.(\w+)", grades)) <= set(GRADE_FIELDS)
