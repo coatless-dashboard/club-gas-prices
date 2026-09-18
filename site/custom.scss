@@ -91,11 +91,16 @@ $navbar-fg: #f4f7f8 !default;
 }
 
 // page-layout: custom hands the whole width over and drops the grid's gutters
-// with it, so the page supplies its own. This is the "full area" the article
-// layout calls screen: content spans the viewport, with a gutter wide enough
-// that nothing is flush against the edge.
+// with it, so the page supplies its own.
+//
+// It is handed back deliberately. Spanning the viewport meant a 1600px monitor
+// got a dot plot with half of it empty and a station list one name wide per
+// 1550px line -- wider, but no more readable. A measure charts and prose can
+// both live at, centered, reads better at every size above it, and below it
+// this is just `max-width` doing nothing.
 #quarto-content.page-layout-custom {
-  max-width: none;
+  max-width: 76rem;
+  margin-inline: auto;
   padding: 1.25rem 1.75rem 0;
 }
 
@@ -504,14 +509,13 @@ main.content > p {
   min-width: 0;
 }
 
-// A panel is what a card was: a titled block of content, sized by what is in
-// it rather than by a share of the viewport.
+// A panel groups a section under its heading. It used to draw a bordered,
+// filled box around whatever was inside -- around a single dropdown, around one
+// line of notes -- so every page read as a stack of containers and the boxes
+// said nothing the heading had not already said. The heading and the rule under
+// it carry the structure now; the panel only has to separate one from the next.
 .cgp-panel {
-  border: 1px solid var(--cgp-control-border);
-  border-radius: 6px;
-  padding: 0.75rem 0.9rem 0.9rem;
-  margin-bottom: 1.25rem;
-  background: var(--cgp-control-bg);
+  margin-bottom: 1.6rem;
 }
 
 h2 {
