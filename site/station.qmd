@@ -95,10 +95,14 @@ stationChart = {
     return html`<div class="cgp-notice cgp-station-chart">No history yet for
       ${selectedMeta.name}.</div>`;
   }
-  const medianLabel =
-    selectedMeta.region == null
-      ? `${COUNTRY_NAMES[selectedMeta.country]} median`
-      : `${selectedMeta.region} median`;
+  // The median is the station's own chain's, and says so wherever the country
+  // has a second chain whose median it could be mistaken for. The chain goes on
+  // a line of its own, because the label sits in the chart's right margin and
+  // "FL Sam's Club median" does not fit on one.
+  const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(latest));
+  const medianLabel = `${chain ? `${chain}\n` : ""}${
+    selectedMeta.region == null ? COUNTRY_NAMES[selectedMeta.country] : selectedMeta.region
+  } median`;
   const entry = selectedLatest ? gradeEntry(selectedLatest, grade) : null;
   const unit = currency === "USD" ? "USD" : entry ? entry.currency : "local";
   const figure = Plot.plot({
@@ -225,6 +229,9 @@ stationDetail = {
       row.name
     }</a> <span class="cgp-stale">${row.km.toFixed(0)} km</span></li>`
   );
+  // The station's chain, by the rule every chart label follows: named where the
+  // country has two, and whenever it is not the primary one.
+  const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(latest));
   return html`<div>
     <div class="cgp-popup-title">${selectedMeta.name}${
       selectedMeta.name_local
@@ -237,7 +244,9 @@ stationDetail = {
       COUNTRY_NAMES[selectedMeta.country]
     ]
       .filter((v) => v)
-      .join(", ")} · ${selectedMeta.station_key}${stationLinksEl(selectedMeta)}</div>
+      .join(", ")}${chain ? ` · ${chain}` : ""} · ${selectedMeta.station_key}${
+      stationLinksEl(selectedMeta)
+    }</div>
     <table class="cgp-table">
       <thead><tr><th>Grade</th><th>As published</th>
         <th class="cgp-num">Local</th><th class="cgp-num">USD</th></tr></thead>

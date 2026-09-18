@@ -19,6 +19,7 @@ pageWantsDb = true
 compareRegionRows = db && compareCountry !== "All countries"
   ? db.query(`
       SELECT region,
+             brand,
              strftime(capture_date, '%Y-%m-%d') AS d,
              n_stations,
              n_stations_usd,
@@ -31,14 +32,18 @@ compareRegionRows = db && compareCountry !== "All countries"
       FROM summary_daily
       WHERE level = 'region' AND country = ${sqlText(compareCountry)}
         AND grade = ${sqlText(grade)}
-      ORDER BY region, capture_date
+      ORDER BY region, brand, capture_date
     `)
   : []
 
 // The newest day each key reached, and whether that is behind the newest day
-// any of them reached. Serves countries and regions alike.
+// any of them reached. Serves countries and regions alike, and a region with two
+// chains is two keys, the way a country is.
 compareRegionLatest = {
-  const {newestFor, newest} = newestByKey(compareRegionRows, "region");
+  const {newestFor, newest} = newestByKey(
+    compareRegionRows,
+    (row) => `${row.region} :: ${row.brand}`
+  );
   const rows = [...newestFor.values()]
     .map((row) => Object.assign({}, row, {sold: true, stale: row.d < newest}))
     .sort((a, b) => (b.median_usd_per_litre ?? 0) - (a.median_usd_per_litre ?? 0));
@@ -53,7 +58,7 @@ compareRegionLatest = {
 // Deliberately its own select rather than shared with Trends: a control that
 // lives on one page and silently governs another is worse than two.
 viewof compareCountry = asField(
-  Inputs.select(["All countries", ...COUNTRY_ORDER], {
+  selectControl("breakdown", ["All countries", ...COUNTRY_ORDER], {
     label: "Breakdown",
     format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
   })
@@ -120,9 +125,15 @@ compareView = {
     // the same cx and the chart asserts that every country moved identically,
     // while the text labels print the real, differing values. Keep at least
     // 140px of plot area, whatever was asked for.
+    //
+    // A chain's name makes a label longer than any the callers planned for
+    // ("United States · Sam's Club · 2026-09-15" lost its first letter), so the
+    // gutter grows to the longest label, at about 5.2px a character of Plot's
+    // 10px type. Every label without one already fits what was asked.
     const marginRightUsed = chartWidth < 500 ? 56 : 110;
+    const longest = Math.max(0, ...rows.map((row) => row.label.length));
     const marginLeftUsed = Math.min(
-      marginLeft,
+      Math.max(marginLeft, Math.ceil(16 + 5.2 * longest)),
       Math.max(80, chartWidth - marginRightUsed - 140)
     );
     return Plot.plot({
@@ -161,9 +172,13 @@ compareView = {
     const unit = currency === "USD" ? "USD" : currencyOf.get(compareCountry) || "local";
     const pick = (row, which) =>
       perVolume(currency === "USD" ? row[`${which}_usd_per_litre`] : row[`${which}_local_per_litre`], volume);
+    // The chain is named by the rule the country rows use, so a state both
+    // chains serve reads as two rows and a single-chain country as before.
+    const nameOf = (row) => placeLabel(row.region, compareCountry, row.brand, compareLatest.chains);
     const rows = regionRows
       .map((row) => ({
-        label: `${row.region}${row.stale ? " (stale)" : ""}`,
+        label: `${nameOf(row)}${row.stale ? " (stale)" : ""}`,
+        name: nameOf(row),
         value: pick(row, "median"),
         p25: pick(row, "p25"),
         p75: pick(row, "p75"),
@@ -186,7 +201,7 @@ compareView = {
         zeroRule: false,
         marginLeft: 200,
         tipTitle: (row) =>
-          `${row.region} · ${row.d}\n` +
+          `${row.name} · ${row.d}\n` +
           `median ${fmtNumber(row.value, priceDigits)} ${unit}${volumeShort}\n` +
           `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}\n` +
           `${row.n} station${row.n === 1 ? "" : "s"}`
@@ -198,23 +213,27 @@ compareView = {
 
   // ---- all countries, local currency: change, not price ------------------
   if (currency === "Local") {
+    // Keyed on the chain as well as the country, so each row is divided by its
+    // own chain's price and never by the other chain's.
     const series = new Map();
     for (const row of compareRows) {
       const value = perVolume(row.median_local_per_litre, volume);
       if (value == null) continue;
-      if (!series.has(row.country)) series.set(row.country, []);
-      series.get(row.country).push({day: toDay(row.d), value, row});
+      const key = seriesOf(row);
+      if (!series.has(key)) series.set(key, []);
+      series.get(key).push({day: toDay(row.d), value, row});
     }
     const baseDay = commonBaseDay([...series.values()]);
     const rows = [];
     for (const item of compareLatest.rows.filter((row) => row.sold)) {
-      const history = series.get(item.country);
+      const history = series.get(seriesOf(item));
       const anchor = history ? anchorRow(history, baseDay) : null;
       const median = perVolume(item.median_local_per_litre, volume);
       if (!anchor || median == null) continue;
       const unit = currencyOf.get(item.country) || "local";
       rows.push({
-        label: `${COUNTRY_NAMES[item.country]} · ${fmtNumber(median, priceDigits)} ${unit}${volumeShort}${item.stale ? " (stale)" : ""}`,
+        label: `${item.label} · ${fmtNumber(median, priceDigits)} ${unit}${volumeShort}${item.stale ? " (stale)" : ""}`,
+        name: item.label,
         country: item.country,
         value: pctFrom(median, anchor.value),
         p25: pctFrom(perVolume(item.p25_local_per_litre, volume), anchor.value),
@@ -246,7 +265,7 @@ compareView = {
         zeroRule: true,
         marginLeft: 260,
         tipTitle: (row) =>
-          `${COUNTRY_NAMES[row.country]} · ${row.d}\n` +
+          `${row.name} · ${row.d}\n` +
           `${fmtPct(row.value)} since ${row.anchorDay}\n` +
           `${fmtNumber(row.median, priceDigits)} ${row.unit}${volumeShort} today\n` +
           `${row.n} station${row.n === 1 ? "" : "s"}`
@@ -258,7 +277,8 @@ compareView = {
   const data = compareLatest.rows
     .filter((row) => row.sold)
     .map((row) => ({
-      label: `${COUNTRY_NAMES[row.country]} · ${row.d}${row.stale ? " (stale)" : ""}`,
+      label: `${row.label} · ${row.d}${row.stale ? " (stale)" : ""}`,
+      name: row.label,
       country: row.country,
       value: perVolume(row.median_usd_per_litre, volume),
       p25: perVolume(row.p25_usd_per_litre, volume),
@@ -282,7 +302,7 @@ compareView = {
       zeroRule: false,
       marginLeft: 200,
       tipTitle: (row) =>
-        `${COUNTRY_NAMES[row.country] || row.country} · ${row.d}\n` +
+        `${row.name} · ${row.d}\n` +
         `median ${fmtNumber(row.value, priceDigits)} USD ${volumeLabel}\n` +
         `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}\n` +
         `${row.n} station${row.n === 1 ? "" : "s"}` +

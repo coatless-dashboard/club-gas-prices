@@ -52,6 +52,7 @@ trendRegionRows =
   db && trendCountry !== "All countries"
     ? db.query(`
         SELECT region,
+               brand,
                strftime(capture_date, '%Y-%m-%d') AS d,
                n_stations,
                median_local_per_litre,
@@ -60,14 +61,22 @@ trendRegionRows =
         WHERE level = 'region'
           AND country = ${sqlText(trendCountry)}
           AND grade = ${sqlText(grade)}
-        ORDER BY region, capture_date
+        ORDER BY region, brand, capture_date
       `)
     : []
+// A region's count is each chain's largest day, added up. The larger chain
+// alone labelled a state both chains serve with half of its stations.
 trendRegionOptions = {
-  const counts = new Map();
+  const perChain = new Map();
   for (const row of trendRegionRows) {
-    if (row.n_stations > (counts.get(row.region) || 0)) counts.set(row.region, row.n_stations);
+    const key = `${row.region} :: ${row.brand}`;
+    const seen = perChain.get(key);
+    if (row.n_stations > (seen ? seen.n : 0)) {
+      perChain.set(key, {region: row.region, n: row.n_stations});
+    }
   }
+  const counts = new Map();
+  for (const {region, n} of perChain.values()) counts.set(region, (counts.get(region) || 0) + n);
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
 }
 ```
@@ -78,7 +87,7 @@ trendRegionOptions = {
 ```{ojs}
 //| output: false
 viewof trendCountry = asField(
-  Inputs.select(["All countries", ...COUNTRY_ORDER], {
+  selectControl("breakdown", ["All countries", ...COUNTRY_ORDER], {
     label: "Breakdown",
     format: (code) => (code === "All countries" ? code : COUNTRY_NAMES[code])
   })
@@ -201,6 +210,10 @@ function coverageStrip(rows, {label}) {
 // the call appears in, so a chart built in that hidden chunk is measured
 // against a container that is never visible and comes out 0 px wide.
 trendView = {
+  // Which chains each country has, so every chart below names a chain by the
+  // same rule, and only where a country has two.
+  const chains = chainsByCountry(trendCountryRows);
+
   function allCountriesUsd() {
     const data = trendCountryRows
       .filter((row) => row.median_usd_per_litre != null)
@@ -211,8 +224,7 @@ trendView = {
         // chains share a country, and a series keyed on country alone would
         // draw one line zig-zagging between two different companies' prices.
         series: row.brand ? `${row.country}-${row.brand}` : row.country,
-        name: COUNTRY_NAMES[row.country],
-        label: seriesLabel(row.country, row.brand),
+        label: seriesLabel(row.country, row.brand, chains),
         day: toDay(row.d),
         median: perVolume(row.median_usd_per_litre, volume),
         p25: perVolume(row.p25_usd_per_litre, volume),
@@ -277,7 +289,7 @@ trendView = {
           y: "median",
           ...tipStyle(),
           title: (row) =>
-            `${row.name} · ${row.day.toISOString().slice(0, 10)}\n` +
+            `${row.label} · ${row.day.toISOString().slice(0, 10)}\n` +
             `median ${fmtNumber(row.median, priceDigits)} USD ${volumeLabel}\n` +
             `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}`
         })
@@ -350,8 +362,7 @@ trendView = {
           country: row.country,
           brand: row.brand,
           series: code,
-          name: COUNTRY_NAMES[row.country],
-          label: seriesLabel(row.country, row.brand),
+          label: seriesLabel(row.country, row.brand, chains),
           day: row.day,
           pct,
           p25: pctFrom(row.p25, anchor.value),
@@ -422,7 +433,7 @@ trendView = {
           y: "pct",
           ...tipStyle(),
           title: (row) =>
-            `${row.name} · ${dayText(row.day)}\n` +
+            `${row.label} · ${dayText(row.day)}\n` +
             `${fmtPct(row.pct)} since ${row.anchorDay}${
               row.rebased ? " (its own first day)" : ""
             }\n` +
@@ -477,10 +488,13 @@ trendView = {
       const marks = [];
       if (showBand) {
         marks.push(
+          // One band per chain. Without `z` the two chains' rows became one
+          // polygon that ran to the last day and doubled back over the first.
           Plot.areaY(rows, {
             x: "day",
             y1: "p25",
             y2: "p75",
+            z: "series",
             fill: COUNTRY_COLORS[code],
             fillOpacity: 0.16
           })
@@ -511,7 +525,7 @@ trendView = {
             y: "median",
             ...tipStyle(),
             title: (row) =>
-              `${COUNTRY_NAMES[code]} · ${row.day.toISOString().slice(0, 10)}\n` +
+              `${seriesLabel(code, row.brand, chains)} · ${dayText(row.day)}\n` +
               `median ${fmtNumber(row.median, priceDigits)} ${unit}\n` +
               `p25 ${fmtNumber(row.p25, priceDigits)} · p75 ${fmtNumber(row.p75, priceDigits)}`
           })
@@ -546,6 +560,10 @@ trendView = {
       const rows = trendCountryRows
         .filter((row) => row.country === trendCountry)
         .map((row) => ({
+          // Per chain, as on every other chart here, should a country without
+          // regions ever have two.
+          series: seriesOf(row),
+          label: seriesLabel(row.country, row.brand, chains),
           day: toDay(row.d),
           median: perVolume(
             currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
@@ -564,6 +582,7 @@ trendView = {
           Plot.line(rows, {
             x: "day",
             y: "median",
+            z: "series",
             stroke: COUNTRY_COLORS[trendCountry],
             strokeWidth: 2
           }),
@@ -575,7 +594,7 @@ trendView = {
               y: "median",
               ...tipStyle(),
               title: (row) =>
-                `${COUNTRY_NAMES[trendCountry]} · ${row.day.toISOString().slice(0, 10)}\n` +
+                `${row.label} · ${row.day.toISOString().slice(0, 10)}\n` +
                 `median ${fmtNumber(row.median, priceDigits)} ${unit} ${volumeLabel}`
             })
           )
@@ -594,10 +613,17 @@ trendView = {
     const asked = trendRegions;
     const drawn = asked.slice(0, PALETTE_SERIES_CAP);
     const chosen = new Set(drawn);
+    // A region with two chains is two lines, the way a country is: keyed on the
+    // region alone, one line zig-zagged between the two companies' prices. Both
+    // take the region's color, and the second chain is dashed.
+    const brands = chains.get(trendCountry) || new Set();
     const data = trendRegionRows
       .filter((row) => chosen.has(row.region))
       .map((row) => ({
         region: row.region,
+        brand: row.brand,
+        series: `${row.region} :: ${row.brand}`,
+        label: placeLabel(row.region, trendCountry, row.brand, chains),
         day: toDay(row.d),
         median: perVolume(
           currency === "USD" ? row.median_usd_per_litre : row.median_local_per_litre,
@@ -618,7 +644,21 @@ trendView = {
       x: {label: "Capture date (UTC)", grid: true, ticks: dayTicks(data)},
       y: {label: `Median ${GRADE_LABELS[grade]}, ${unit} ${volumeLabel}`, grid: true, nice: true},
       marks: [
-        Plot.line(data, {x: "day", y: "median", z: "region", stroke: "region", strokeWidth: 2}),
+        Plot.line(data.filter((row) => !row.brand || row.brand === PRIMARY_BRAND), {
+          x: "day",
+          y: "median",
+          z: "series",
+          stroke: "region",
+          strokeWidth: 2
+        }),
+        Plot.line(data.filter((row) => row.brand && row.brand !== PRIMARY_BRAND), {
+          x: "day",
+          y: "median",
+          z: "series",
+          stroke: "region",
+          strokeWidth: 2,
+          strokeDasharray: "4 3"
+        }),
         Plot.dot(data, {x: "day", y: "median", r: 2, fill: "region"}),
         Plot.tip(
           data,
@@ -627,17 +667,24 @@ trendView = {
             y: "median",
             ...tipStyle(),
             title: (row) =>
-              `${row.region} · ${row.day.toISOString().slice(0, 10)}\n` +
+              `${row.label} · ${row.day.toISOString().slice(0, 10)}\n` +
               `median ${fmtNumber(row.median, priceDigits)} ${unit} ${volumeLabel}`
           })
         )
       ]
     });
-    if (asked.length <= drawn.length) return figure;
-    return html`<div>${figure}<div class="cgp-notice">Showing the first
+    // The color legend is spent on regions, so which line is which chain
+    // needs a key of its own -- only where there are two to tell apart.
+    const key = brands.size > 1 ? chainKeyEl(brands) : "";
+    if (asked.length <= drawn.length && !key) return figure;
+    const capped =
+      asked.length <= drawn.length
+        ? ""
+        : html`<div class="cgp-notice">Showing the first
       ${drawn.length} of ${asked.length} regions you picked: the palette has
       ${PALETTE_SERIES_CAP} colors, and beyond that two regions would share
-      one. Separate charts shows them all.</div></div>`;
+      one. Separate charts shows them all.</div>`;
+    return html`<div>${key}${figure}${capped}</div>`;
   }
 
   if (!db) return html`<div class="cgp-notice">Loading the price database…</div>`;

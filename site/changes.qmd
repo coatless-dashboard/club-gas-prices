@@ -162,16 +162,24 @@ function changesBinned(rows, keyName) {
 ::: {.cgp-panel}
 
 ```{ojs}
-function changesChart(rows, keyName, {rowLabel, marginLeft}) {
+// `labelOf` names a row. A station row is keyed on its station_key and shows
+// its name: keyed on the name, two stations sharing one would merge.
+function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => key}) {
   const {cells, binDomain} = changesBinned(rows, keyName);
   if (!cells.length) return null;
-  const keys = [...new Set(cells.map((c) => c.key))].sort();
   const brands = [...new Set(cells.map((c) => c.brand))].sort();
   // Keep at least 140px of plot area, the way compare's dotPlot does.
   const left = Math.min(marginLeft, Math.max(56, chartWidth - 24 - 140));
 
   return brands.map((brand) => {
     const mine = cells.filter((c) => c.brand === brand);
+    // Each chain's rows are its own. Shared, every chart carried a blank row
+    // for each of the other chain's stations. Sorted by what the row shows, as
+    // before, with the key breaking a tie between two stations of one name.
+    const keys = [...new Set(mine.map((c) => c.key))].sort((a, b) => {
+      const [x, y] = [labelOf(a), labelOf(b)];
+      return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+    });
     return Plot.plot({
       width: chartWidth,
       height: 34 + keys.length * (chartWidth < 520 ? 11 : 16),
@@ -185,7 +193,7 @@ function changesChart(rows, keyName, {rowLabel, marginLeft}) {
         ticks: Math.min(8, binDomain.length),
         tickRotate: -35
       },
-      y: {domain: keys, label: null},
+      y: {domain: keys, label: null, tickFormat: labelOf},
       ariaLabel: `${
         BRAND_NAMES[brand] || brand
       }: how often the posted ${GRADE_LABELS[grade]} price moved, by ${rowLabel}`,
@@ -197,9 +205,10 @@ function changesChart(rows, keyName, {rowLabel, marginLeft}) {
           // Quarto's light/dark toggle the way the map's markers do.
           fill: (c) => (c.rate == null ? palette.missing : colorForFraction(c.rate, palette)),
           title: (c) =>
-            c.rate == null
-              ? `${c.key} · ${c.bin}\nnot enough readings (${c.n_obs})`
-              : `${c.key} · ${c.bin}\n${fmtShare(c.rate * 100)} of ${c.n_obs} readings moved`,
+            `${labelOf(c.key)} · ${c.bin}\n` +
+            (c.rate == null
+              ? `not enough readings (${c.n_obs})`
+              : `${fmtShare(c.rate * 100)} of ${c.n_obs} readings moved`),
           inset: 0.5
         }),
         Plot.text([BRAND_NAMES[brand] || brand], {
@@ -225,12 +234,10 @@ changesFigure = {
     }. This fills in as captures accumulate.</div>`;
   }
   const nameOf = new Map(stationsAll.map((s) => [s.station_key, s.name]));
-  const shaped = drilled
-    ? rows.map((r) => ({...r, station_key: nameOf.get(r.station_key) || r.station_key}))
-    : rows;
-  const charts = changesChart(shaped, drilled ? "station_key" : "region", {
+  const charts = changesChart(rows, drilled ? "station_key" : "region", {
     rowLabel: drilled ? "station" : "state",
-    marginLeft: drilled ? 150 : 56
+    marginLeft: drilled ? 150 : 56,
+    labelOf: drilled ? (key) => nameOf.get(key) || key : undefined
   });
   if (!charts) return html`<div class="cgp-notice">Not enough readings yet.</div>`;
   return html`<div>${changesSummary}${charts}</div>`;

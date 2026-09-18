@@ -229,6 +229,17 @@ function radioControl(name, entries, value, label) {
   return input;
 }
 
+// A select with the hooks radioControl gives its radios: an Observable Inputs
+// option's value is its index, which says nothing about what it selects.
+function selectControl(name, values, options) {
+  const input = Inputs.select(values, options);
+  input.setAttribute("data-control", name);
+  input.querySelectorAll("option").forEach((el, i) => {
+    el.setAttribute("data-value", values[i]);
+  });
+  return input;
+}
+
 // Every in-site link carries the controls forward. Without this the state
 // silently resets on each navigation, which is the failure mode to watch for.
 controlLinkCarrier = {
@@ -573,10 +584,12 @@ function showDots(pointsPerSeries, plotWidth = 790) {
 // Stations behind the latest day, from a column the query already selects and
 // nothing drew.
 //
-// Summed per chain, never across them. summary_daily is keyed on brand as well
-// as country, so once a second chain publishes in a country there are two rows
-// per day and a bare sum would quietly produce the pooled figure this site does
-// not make. `seriesOf` is the grouping every caller should use.
+// summary_daily is keyed on brand as well as country, so a country with two
+// chains has two rows a day, and `seriesOf` is the grouping every caller should
+// use. A chart that draws every series stands on all of their stations, so the
+// count adds the series up: taking the largest one reported the United States
+// alone under a seven-country chart. Asked about one series, it is that series'
+// count and nothing more.
 function seriesOf(row) {
   return row.brand ? `${row.country}-${row.brand}` : row.country;
 }
@@ -585,15 +598,17 @@ function latestStationCount(rows, series) {
   const scoped = series == null ? rows : rows.filter((row) => seriesOf(row) === series);
   let newest = "";
   for (const row of scoped) if (row.d > newest) newest = row.d;
-  const onNewest = scoped.filter((row) => row.d === newest);
-  // One row per series per day by construction. More than one means a caller
-  // handed in two chains, and the honest answer is the larger, not the sum.
   const bySeries = new Map();
-  for (const row of onNewest) {
+  for (const row of scoped) {
+    if (row.d !== newest) continue;
+    // One row per series per day by construction. A second one would be the
+    // same stations reported twice, so it is never added to the first.
     const key = seriesOf(row);
-    bySeries.set(key, (bySeries.get(key) || 0) + (row.n_stations || 0));
+    bySeries.set(key, Math.max(bySeries.get(key) || 0, row.n_stations || 0));
   }
-  return Math.max(0, ...bySeries.values());
+  let total = 0;
+  for (const count of bySeries.values()) total += count;
+  return total;
 }
 
 // What the chart covers, said once rather than hovered for.
@@ -704,13 +719,62 @@ function priceChanges(rows, limit = 30) {
 // the United States has a second, so the second is the one that gets dashed.
 PRIMARY_BRAND = "COSTCO"
 
-// A line's name. The country alone is enough where it has one chain, which is
-// everywhere but the United States; naming the chain only where it disambiguates
-// keeps six of seven countries reading the way they always did.
-function seriesLabel(country, brand) {
-  const name = COUNTRY_NAMES[country] || country;
-  if (!brand || brand === PRIMARY_BRAND) return name;
-  return `${name} · ${BRAND_NAMES[brand] || brand}`;
+// The chains each country has among `rows`. Built from what the caller is about
+// to draw, so a label names a chain only where the reader is looking at two.
+function chainsByCountry(rows) {
+  const out = new Map();
+  for (const row of rows) {
+    if (!row.brand) continue;
+    if (!out.has(row.country)) out.set(row.country, new Set());
+    out.get(row.country).add(row.brand);
+  }
+  return out;
+}
+
+// The chain's name where a label needs it, and "" where it does not. The
+// country alone is enough where it has one chain, which is everywhere but the
+// United States; naming the chain only where it disambiguates keeps six of
+// seven countries reading the way they always did. Where a country has two,
+// both are named: "United States" beside "United States · Sam's Club" reads as
+// the national figure, which is the pooled number this site never draws. A
+// chain other than the primary one is named even on its own, so a day Costco's
+// feed failed cannot pass Sam's Club off under the country's name.
+function chainTag(country, brand, chains) {
+  const shared = chains != null && chains.has(country) && chains.get(country).size > 1;
+  if (!brand || (brand === PRIMARY_BRAND && !shared)) return "";
+  return BRAND_NAMES[brand] || brand;
+}
+
+// The primary chain first and the rest by code, so a country's rows and a key's
+// entries always come in the same order.
+function chainOrder(a, b) {
+  if (a === b) return 0;
+  return a === PRIMARY_BRAND ? -1 : b === PRIMARY_BRAND ? 1 : a < b ? -1 : 1;
+}
+
+// A place's name, and its chain where chainTag says so. The place is a country
+// or a region inside one; either way it is the country that has the chains.
+function placeLabel(place, country, brand, chains) {
+  const chain = chainTag(country, brand, chains);
+  return chain ? `${place} · ${chain}` : place;
+}
+
+// A line's name.
+function seriesLabel(country, brand, chains) {
+  return placeLabel(COUNTRY_NAMES[country] || country, country, brand, chains);
+}
+
+// Which line is which chain, for a chart whose legend already spends its colors
+// on something else. Solid is the primary chain and dashed the other, the way
+// every line on the site draws them.
+function chainKeyEl(brands) {
+  return html`<div class="cgp-legend">${[...brands].sort(chainOrder).map(
+    (brand) => html`<svg width="22" height="12" aria-hidden="true"><line x1="0" x2="22" y1="6"
+      y2="6" stroke=${palette.muted} stroke-width="2"
+      stroke-dasharray=${brand === PRIMARY_BRAND ? null : "4 3"}></line></svg><span>${
+      BRAND_NAMES[brand] || brand
+    }</span>`
+  )}</div>`;
 }
 
 BRAND_NAMES = {
@@ -901,34 +965,48 @@ compareRows = db
     `)
   : []
 
-// Each country uses its own newest day that has stations; an older day is stale.
-function newestByKey(rows, keyName) {
+// Each series uses its own newest day that has stations; an older day is stale.
+// A series is a chain in a place, never the place alone: keyed on the country,
+// whichever chain had the newer day silently stood in for both.
+function newestByKey(rows, keyOf) {
   const newestFor = new Map();
   for (const row of rows) {
     if (!(row.n_stations > 0)) continue;
-    const previous = newestFor.get(row[keyName]);
-    if (!previous || row.d > previous.d) newestFor.set(row[keyName], row);
+    const key = keyOf(row);
+    const previous = newestFor.get(key);
+    if (!previous || row.d > previous.d) newestFor.set(key, row);
   }
   let newest = "";
   for (const row of newestFor.values()) if (row.d > newest) newest = row.d;
   return {newestFor, newest};
 }
 
+// One row per chain in each country, the primary chain first. `chains` goes
+// out with the rows so the region breakdown names chains by the same rule.
 compareLatest = {
-  const newestByCountry = new Map();
-  for (const row of compareRows) {
-    if (!(row.n_stations > 0)) continue;
-    const previous = newestByCountry.get(row.country);
-    if (!previous || row.d > previous.d) newestByCountry.set(row.country, row);
+  const {newestFor, newest} = newestByKey(compareRows, seriesOf);
+  const series = [...newestFor.values()];
+  const chains = chainsByCountry(series);
+  const rows = [];
+  for (const code of COUNTRY_ORDER) {
+    const mine = series
+      .filter((row) => row.country === code)
+      .sort((a, b) => chainOrder(a.brand, b.brand));
+    if (!mine.length) {
+      rows.push({country: code, label: COUNTRY_NAMES[code], sold: false, stale: false});
+      continue;
+    }
+    for (const row of mine) {
+      rows.push(
+        Object.assign({}, row, {
+          label: seriesLabel(row.country, row.brand, chains),
+          sold: true,
+          stale: row.d < newest
+        })
+      );
+    }
   }
-  let newest = "";
-  for (const row of newestByCountry.values()) if (row.d > newest) newest = row.d;
-  const rows = COUNTRY_ORDER.map((code) => {
-    const row = newestByCountry.get(code);
-    if (!row) return {country: code, sold: false, stale: false};
-    return Object.assign({}, row, {sold: true, stale: row.d < newest});
-  });
-  return {rows, newest};
+  return {rows, newest, chains};
 }
 
 function compareTableEl() {
@@ -938,7 +1016,7 @@ function compareTableEl() {
         <td colspan="5" class="cgp-stale">not sold</td></tr>`;
     }
     return html`<tr>
-      <td>${COUNTRY_NAMES[row.country]}${
+      <td>${row.label}${
         row.stale ? html` <span class="cgp-stale">stale</span>` : ""
       }</td>
       <td>${currencyOf.get(row.country) || ""}</td>
@@ -1085,11 +1163,15 @@ stationHistoryRows = {
   `);
 }
 
+// The median of the station's own chain. A state both chains serve has one
+// row a day for each, and read together they drew one line alternating
+// between two companies' prices under a single "FL median".
 stationMedianRows = {
   if (!db || !selectedMeta) return [];
   const level = selectedMeta.region == null ? "country" : "region";
   const regionClause =
     selectedMeta.region == null ? "region IS NULL" : `region = ${sqlText(selectedMeta.region)}`;
+  const brandClause = selectedMeta.brand ? `AND brand = ${sqlText(selectedMeta.brand)}` : "";
   return db.query(`
     SELECT strftime(capture_date, '%Y-%m-%d') AS d,
            median_local_per_litre,
@@ -1098,6 +1180,7 @@ stationMedianRows = {
     WHERE level = '${level}'
       AND country = ${sqlText(selectedMeta.country)}
       AND ${regionClause}
+      ${brandClause}
       AND grade = ${sqlText(grade)}
     ORDER BY capture_date
   `);

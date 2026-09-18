@@ -505,7 +505,106 @@ def test_summary_queries_carry_brand_so_two_chains_cannot_pool():
     # brand is projected, so a consumer can tell the chains apart.
     assert shared.count("             brand,\n") == country_queries
 
-    # And the station count is per chain, not a bare sum across rows.
+    # And the station count is taken per series before the series are added
+    # up, never as a bare sum across rows.
     assert "function seriesOf(row)" in shared
     assert "function latestStationCount(rows, series)" in shared
     assert ".reduce((total, row) => total + (row.n_stations || 0), 0)" not in shared
+
+
+def test_the_latest_day_note_adds_up_every_series():
+    """The note under a seven-country chart said 596 stations, the United States
+    alone, because the count took the largest series rather than all of them.
+    Within a series a second row is the same stations twice, so that stays a
+    maximum; across series the chart stands on every one of them."""
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    body = shared.split("function latestStationCount(", 1)[1].split("\n}\n", 1)[0]
+    assert "Math.max(0, ...bySeries.values())" not in body
+    assert "Math.max(bySeries.get(key) || 0, row.n_stations || 0)" in body
+    assert "total += count" in body
+
+
+def region_queries(name: str) -> list[str]:
+    """Every region-level summary query on a page, SELECT to closing backtick."""
+    text = (SITE / name).read_text(encoding="utf-8")
+    return [q for q in re.findall(r"SELECT(.*?)`", text, re.S) if "level = 'region'" in q]
+
+
+def test_region_queries_carry_brand_so_two_chains_cannot_pool():
+    """A state both chains serve has a row a day for each. Without brand the
+    rows cannot be told apart: Compare kept whichever came first, and Trends
+    drew one line alternating between two companies' prices."""
+    for name in ("compare.qmd", "trends.qmd"):
+        queries = region_queries(name)
+        assert queries, name
+        for query in queries:
+            assert query.lstrip().startswith("region,\n") and "brand,\n" in query, name
+            assert "ORDER BY region, brand, capture_date" in query, name
+
+
+def test_compare_keys_every_row_on_its_chain():
+    """Keyed on the country, the newer of two chains silently stood in for both,
+    and in local currency one chain's median was divided by the other's anchor."""
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    compare = (SITE / "compare.qmd").read_text(encoding="utf-8")
+    assert "newestByKey(compareRows, seriesOf)" in shared
+    assert "newestByCountry" not in shared
+    # A region's key is the region and the chain.
+    assert "(row) => `${row.region} :: ${row.brand}`" in compare
+    assert 'newestByKey(compareRegionRows, "region")' not in compare
+    # Each local-currency row is measured from its own chain's history.
+    assert "series.get(seriesOf(item))" in compare
+    assert "series.get(item.country)" not in compare
+    # And every row is labelled by the one rule that names a chain.
+    assert "label: seriesLabel(row.country, row.brand, chains)" in shared
+    assert "placeLabel(row.region, compareCountry, row.brand, compareLatest.chains)" in compare
+    assert "COUNTRY_NAMES[row.country] || row.country} · ${row.d}" not in compare
+
+
+def test_every_trends_line_and_band_is_keyed_on_the_series():
+    """Without `z`, Plot joins every row of a mark into one path. Two chains in
+    a region became one sawtooth line, and two chains' bands in the separate
+    charts became one polygon that ran to the last day and doubled back."""
+    trends = (SITE / "trends.qmd").read_text(encoding="utf-8")
+    marks = re.split(r"Plot\.(?:line|areaY)\(", trends)[1:]
+    assert len(marks) >= 10  # the split works, so the loop below is not vacuous
+    for mark in marks:
+        options = mark.split("})", 1)[0]
+        assert 'z: "series"' in options, options[:160]
+    # A region's series is the region and the chain, as a country's is.
+    assert "series: `${row.region} :: ${row.brand}`" in trends
+    assert 'z: "region"' not in trends
+    # The Regions control counts each chain's stations and adds them up; the
+    # larger chain alone gave a state both serve half of its count.
+    options = trends.split("trendRegionOptions = {", 1)[1].split("\n}\n", 1)[0]
+    assert "const key = `${row.region} :: ${row.brand}`;" in options
+    assert "(counts.get(region) || 0) + n" in options
+    # Every line is named by the rule that names a chain where a country has two.
+    assert "seriesLabel(row.country, row.brand)" not in trends
+    assert trends.count("seriesLabel(row.country, row.brand, chains)") >= 3
+
+
+def test_the_station_median_is_its_own_chains():
+    """A state both chains serve has a median for each, and read together they
+    drew one line alternating between them under a single label."""
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    station = (SITE / "station.qmd").read_text(encoding="utf-8")
+    query = shared.split("stationMedianRows = {", 1)[1].split("\n}\n", 1)[0]
+    assert "AND brand = ${sqlText(selectedMeta.brand)}" in query
+    assert "${brandClause}" in query
+    # The page names the station's chain, in the median's label and beside its
+    # place, by the rule every chart label follows.
+    assert station.count("chainTag(selectedMeta.country, selectedMeta.brand") == 2
+    assert '${chain ? ` · ${chain}` : ""} · ${selectedMeta.station_key}' in station
+
+
+def test_changes_rows_are_per_chain_and_keyed_on_the_station():
+    """Keys computed across both chains gave each chain's chart a blank row for
+    every station of the other; keyed on the name, two stations sharing one
+    would have merged."""
+    changes = (SITE / "changes.qmd").read_text(encoding="utf-8")
+    chart = changes.split("function changesChart(", 1)[1].split("\n}\n", 1)[0]
+    assert "mine.map((c) => c.key)" in chart
+    assert "cells.map((c) => c.key)" not in chart
+    assert "tickFormat: labelOf" in chart
+    assert "station_key: nameOf.get(" not in changes

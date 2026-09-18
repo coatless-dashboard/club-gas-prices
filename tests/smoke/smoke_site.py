@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import itertools
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +41,39 @@ IDLE_TIMEOUT_MS = 60_000
 # question this gate asks, which is whether the card drew the data at all.
 COMPARE_DOTS = 'svg g[aria-label="dot"] circle'
 TREND_MARKS = 'svg g[aria-label="line"] path, svg g[aria-label="dot"] circle'
+
+# Every linear line and band of every Plot chart on the page, for the two-chain
+# checks. Plot marks its own SVGs with a `plot-` class, which the chain key's
+# small swatches do not carry.
+PLOT_PATHS_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"))
+  .flatMap((svg) => ["line", "area"].flatMap((kind) =>
+    [...svg.querySelectorAll(`g[aria-label="${kind}"] path`)].map((path) => ({
+      chart: svg.getAttribute("aria-label") || "",
+      kind,
+      d: path.getAttribute("d") || ""
+    }))))"""
+
+# Each Changes chart's row labels against the rows that have any cell at all.
+CHANGES_ROWS_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("aria-label") || "").includes("by station"))
+  .map((svg) => ({
+    chart: svg.getAttribute("aria-label"),
+    ticks: svg.querySelectorAll('g[aria-label="y-axis tick label"] text').length,
+    rows: new Set([...svg.querySelectorAll('g[aria-label="cell"] rect')]
+      .map((rect) => rect.getAttribute("y"))).size
+  }))"""
+
+# Row labels that start left of their chart, cut off by a gutter too narrow for
+# them. A chain's name is what makes a row label long.
+CLIPPED_LABELS_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("class") || "").startsWith("plot"))
+  .flatMap((svg) => {
+    const left = svg.getBoundingClientRect().left;
+    return [...svg.querySelectorAll('g[aria-label="y-axis tick label"] text')]
+      .filter((text) => text.getBoundingClientRect().left < left - 0.5)
+      .map((text) => text.textContent);
+  })"""
 
 TILE_HOSTS = ("basemaps.cartocdn.com", "tile.openstreetmap.org")
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com")
@@ -103,6 +138,104 @@ def expected_usd_countries(latest: list[dict], grade: str) -> int:
         if entry.get("price_usd_per_litre") is not None:
             countries.add(station.get("country"))
     return len(countries)
+
+
+def chains_by_country(latest: list[dict]) -> dict[str, set[str]]:
+    """The chains each country has in `latest.json`."""
+    out: dict[str, set[str]] = {}
+    for station in latest:
+        if station.get("brand"):
+            out.setdefault(station.get("country"), set()).add(station["brand"])
+    return out
+
+
+def usd_series(latest: list[dict], grade: str, *, country: str | None = None) -> set[tuple]:
+    """The series Compare draws one dot each for, in USD.
+
+    Across countries a series is a (country, chain) pair; inside one country it
+    is a (region, chain) pair. Either way it is never the place alone: a state
+    both chains serve is two dots, not one.
+    """
+    series = set()
+    for station in latest:
+        entry = (station.get("grades") or {}).get(grade) or {}
+        if entry.get("price_usd_per_litre") is None:
+            continue
+        if country is None:
+            series.add((station.get("country"), station.get("brand")))
+        elif station.get("country") == country and station.get("region"):
+            series.add((station.get("region"), station.get("brand")))
+    return series
+
+
+def expected_latest_stations(summary_path: Path, grade: str) -> int:
+    """Stations behind the newest day of the country-level summary, every series added.
+
+    What the note under the all-countries Trends chart should say: the chart
+    draws every chain in every country, so it stands on all of their stations,
+    not on the largest series' alone. polars is imported here, as Playwright is
+    in main(): it comes from the dev group, which both workflows sync alongside
+    the smoke one.
+    """
+    import polars as pl
+
+    rows = pl.read_parquet(summary_path).filter(
+        (pl.col("level") == "country") & (pl.col("grade") == grade)
+    )
+    if rows.is_empty():
+        return 0
+    newest = rows["capture_date"].max()
+    return int(rows.filter(pl.col("capture_date") == newest)["n_stations"].sum())
+
+
+def path_points(d: str) -> list[tuple[float, float]] | None:
+    """The vertices of a path drawn in straight segments, or None.
+
+    Plot writes a linear line or area as M, L and Z commands. Anything else --
+    the coverage strip's step curve -- returns None, because x repeats there by
+    design and says nothing about how the series were keyed.
+    """
+    points = []
+    for command, args in re.findall(r"([A-Za-z])([^A-Za-z]*)", d or ""):
+        if command in "Zz":
+            continue
+        if command not in "ML":
+            return None
+        numbers = [float(n) for n in re.findall(r"-?\d*\.?\d+", args)]
+        points.extend(zip(numbers[::2], numbers[1::2], strict=True))
+    return points
+
+
+def doubles_back(d: str) -> bool:
+    """True when a line ever steps back or sideways in x.
+
+    One series has one reading a day, so its line only moves right. Two chains
+    keyed as one series alternate between their two prices on the same day,
+    which is a vertical step: the sawtooth the audit found in every state that
+    both chains serve.
+    """
+    points = path_points(d)
+    if not points:
+        return False
+    return any(b[0] <= a[0] for a, b in itertools.pairwise(points))
+
+
+def area_turns(d: str) -> int:
+    """How often a band's outline reverses direction in x.
+
+    A band for one series runs out along its upper edge and back along its
+    lower one: one turn. Two series drawn as one band run out and back twice.
+    """
+    points = path_points(d)
+    if not points:
+        return 0
+    turns, heading = 0, 0
+    for a, b in itertools.pairwise(points):
+        step = (b[0] > a[0]) - (b[0] < a[0])
+        if step and heading and step != heading:
+            turns += 1
+        heading = step or heading
+    return turns
 
 
 def is_site_console_error(message_type: str, location_url: str, origin: str) -> bool:
@@ -245,6 +378,136 @@ def set_control(page, name: str, value: str) -> None:
     page.locator(f'[data-control="{name}"] input[data-value="{value}"]').first.check()
 
 
+def choose(page, name: str, value: str) -> None:
+    """Pick `value` in a select the site built with selectControl."""
+    option = page.locator(f'[data-control="{name}"] option[data-value="{value}"]').first
+    page.locator(f'[data-control="{name}"] select').first.select_option(
+        option.get_attribute("value")
+    )
+
+
+def note_check(page, failures: Failures, step: str, expected: int) -> None:
+    """The note under an all-countries chart counts every series' stations."""
+    notes = page.locator(".cgp-notice", has_text="stations on the latest day")
+    if not notes.count():
+        failures.add(f"{step}: no note says how many stations the chart stands on")
+        return
+    text = notes.first.inner_text()
+    match = re.search(r"(\d[\d,]*) stations on the latest day", text)
+    said = int(match.group(1).replace(",", "")) if match else -1
+    if said != expected:
+        failures.add(f"{step}: the note counts {said} stations on the latest day, not {expected}")
+    else:
+        print(f"{step}: note counts all {expected} stations on the latest day", flush=True)
+
+
+def series_check(page, failures: Failures, step: str) -> None:
+    """Every line and band on the page is one series, never two chains joined."""
+    paths = page.evaluate(PLOT_PATHS_JS)
+    joined = sorted(
+        {
+            path["chart"]
+            for path in paths
+            if (path["kind"] == "line" and doubles_back(path["d"]))
+            or (path["kind"] == "area" and area_turns(path["d"]) > 1)
+        }
+    )
+    if not any(path["kind"] == "line" for path in paths):
+        failures.add(f"{step}: no lines were drawn")
+    elif joined:
+        failures.add(f"{step}: a line or band joins two series in {joined}")
+    else:
+        print(f"{step}: ok, {len(paths)} lines and bands, each one series", flush=True)
+
+
+def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures, collected):
+    """Two chains in one country are two series on every page.
+
+    Only a release with a second chain can show the difference, so a Costco-only
+    one skips this. The Test workflow renders the two-chain sample, where it
+    always runs.
+    """
+    chains = chains_by_country(latest)
+    shared = sorted(code for code, brands in chains.items() if len(brands) > 1)
+
+    # Compare: a dot per chain in each country, and per chain in each region.
+    page.goto(base_url + "compare.html", wait_until="load")
+    wait_idle(page, failures, "step 5 compare")
+    expected = len(usd_series(latest, "regular"))
+    drawn = page.locator(COMPARE_DOTS).count()
+    clipped = page.evaluate(CLIPPED_LABELS_JS)
+    if drawn < expected:
+        failures.add(f"step 5 compare: {drawn} dots for {expected} chains across countries")
+    elif clipped:
+        failures.add(f"step 5 compare: row labels cut off at the left: {clipped}")
+    else:
+        print(f"step 5 compare: ok, a dot for each of {expected} chains", flush=True)
+    for code in shared:
+        page.goto(base_url + "compare.html", wait_until="load")
+        wait_idle(page, failures, f"step 5 compare {code}")
+        choose(page, "breakdown", code)
+        page.wait_for_selector('svg[aria-label*="by region"]', timeout=IDLE_TIMEOUT_MS)
+        wait_idle(page, failures, f"step 5 compare {code}")
+        expected = len(usd_series(latest, "regular", country=code))
+        drawn = page.locator(COMPARE_DOTS).count()
+        if drawn < expected:
+            failures.add(f"step 5 compare {code}: {drawn} dots for {expected} region chains")
+        else:
+            print(f"step 5 compare {code}: ok, a dot for each of {expected} chains", flush=True)
+    check_clean(page, failures, "step 5 compare", collected)
+
+    # Trends: a region both chains serve is two lines, not one sawtooth.
+    for code in shared:
+        page.goto(base_url + "trends.html", wait_until="load")
+        wait_idle(page, failures, f"step 5 trends {code}")
+        choose(page, "breakdown", code)
+        page.wait_for_selector('svg[aria-label*="by region"]', timeout=IDLE_TIMEOUT_MS)
+        wait_idle(page, failures, f"step 5 trends {code}")
+        series_check(page, failures, f"step 5 trends {code}")
+    # The small multiples band each chain on its own.
+    page.goto(base_url + "trends.html?view=separate&cur=Local", wait_until="load")
+    wait_idle(page, failures, "step 5 trends separate")
+    series_check(page, failures, "step 5 trends separate")
+    check_clean(page, failures, "step 5 trends", collected)
+
+    # A region both chains serve: its station's median is its own chain's, and
+    # the Changes drill-down gives each chain only its own stations.
+    regions: dict[tuple, set] = {}
+    for station in latest:
+        if station.get("country") in shared and station.get("region"):
+            key = (station["country"], station["region"])
+            regions.setdefault(key, set()).add(station.get("brand"))
+    both = sorted(key for key, brands in regions.items() if len(brands) > 1)
+    if not both:
+        print("step 5: no region has two chains, so the station and drill-down checks skip")
+        return
+    country, region = both[0]
+    station = next(s for s in latest if s["country"] == country and s["region"] == region)
+    page.goto(
+        f"{base_url}station.html?station={quote(station['station_key'], safe='')}",
+        wait_until="load",
+    )
+    wait_idle(page, failures, "step 5 station")
+    series_check(page, failures, f"step 5 station {station['station_key']}")
+    check_clean(page, failures, "step 5 station", collected)
+    if country != "US":
+        return  # The Changes page covers US states only.
+    page.goto(base_url + "changes.html", wait_until="load")
+    wait_idle(page, failures, "step 5 changes")
+    page.locator("form", has_text="Drill into").locator("select").select_option(label=region)
+    page.wait_for_selector('svg[aria-label*="by station"]', timeout=IDLE_TIMEOUT_MS)
+    wait_idle(page, failures, f"step 5 changes {region}")
+    charts = page.evaluate(CHANGES_ROWS_JS)
+    blank = [chart["chart"] for chart in charts if chart["ticks"] != chart["rows"]]
+    if len(charts) < 2:
+        failures.add(f"step 5 changes {region}: {len(charts)} chart(s) for two chains")
+    elif blank:
+        failures.add(f"step 5 changes {region}: rows with no readings in {blank}")
+    else:
+        print(f"step 5 changes {region}: ok, each chain lists only its stations", flush=True)
+    check_clean(page, failures, "step 5 changes", collected)
+
+
 def launch_browser(playwright, *, headed: bool = False):
     try:
         return playwright.chromium.launch(channel="chrome", headless=not headed)
@@ -317,6 +580,9 @@ def main() -> int:
             # nothing about whether either page drew anything at all, and a
             # completely empty card is exactly what this is the only gate on.
             countries = expected_usd_countries(latest, "regular")
+            stations_on_latest_day = expected_latest_stations(
+                site_dir / "data" / "summary_daily.parquet", "regular"
+            )
             for name in PAGES:
                 page_id = name.removesuffix(".html")
                 page.goto(base_url + name, wait_until="load")
@@ -325,6 +591,7 @@ def main() -> int:
                     plot_check(page, failures, "step 2 compare", COMPARE_DOTS, countries, "dots")
                 elif page_id == "trends":
                     plot_check(page, failures, "step 2 trends", TREND_MARKS, countries, "marks")
+                    note_check(page, failures, "step 2 trends", stations_on_latest_day)
                 check_clean(page, failures, f"step 2 {page_id}", collected)
 
             # Step 2c: hovering a chart has to raise a tip. The tip mark is easy
@@ -482,6 +749,12 @@ def main() -> int:
             if "USD" not in panel:
                 failures.add("step 4: the station panel never mentions the USD conversion")
             check_clean(page, failures, "step 4", collected)
+
+            # Step 5: two chains stay apart on every page.
+            if len({station.get("brand") for station in latest}) > 1:
+                two_chain_steps(page, base_url, latest, failures, collected)
+            else:
+                print("step 5: one chain in latest.json, so the two-chain checks skip", flush=True)
 
             browser.close()
     finally:

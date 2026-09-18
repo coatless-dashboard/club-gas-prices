@@ -23,7 +23,7 @@ and that is where the dataset, its schema and its release history live.
 | Page | What it shows |
 |---|---|
 | Map | Every station with coordinates, colored by rank within its country or on an absolute USD scale. Stations group while the map shows a continent and separate as it is zoomed in. The popup gives the published price, the local price, the USD price, the exchange rate used and the age of the reading. |
-| Compare | One row per country for the selected grade: median, p25–p75 and the number of stations, in USD or in local currency, with a breakdown by region. |
+| Compare | One row per country for the selected grade, and one per chain where a country has two: median, p25–p75 and the number of stations, in USD or in local currency, with a breakdown by region. |
 | Trends | Daily medians over time for every country, and regional series for one country at a time. Each chain is drawn as its own line. |
 | Changes | How often a posted price moved, as a heatmap by chain and US state, with a drill-down to one state's stations. |
 | Station | One station's price history per grade, its last thirty price changes, directions, its warehouse page where the source publishes one, and the five nearest active stations. Deep-linkable as `station.html?station=<station_key>`. |
