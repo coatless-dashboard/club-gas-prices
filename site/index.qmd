@@ -6,9 +6,6 @@ title: "Map"
 
 ```{ojs}
 //| output: false
-// Only the pages that query the release load DuckDB; the others never
-// pay for it. This replaced a MutationObserver that watched which tab
-// pane was active, which a multi-page site has no need of.
 pageWantsDb = false
 pageWantsHistory = false
 ```
@@ -57,7 +54,7 @@ mapTiles = {
 }
 effectiveColorMode = currency === "Local" && colorMode === "absolute" ? "rank" : colorMode
 
-// "Absolute" is a single USD scale, so it is unavailable in local currency.
+// Absolute mode needs USD; disable it when showing local currency.
 absoluteGuard = {
   const input = (viewof colorMode).querySelector('input[data-value="absolute"]');
   const disabled = currency === "Local";
@@ -112,8 +109,7 @@ markerLayerUpdate = {
   const pal = palette;
   const domain = absoluteDomain;
   const ranks = rankPercentiles;
-  // Read by clusterIcon, which is bound once when the map is built and would
-  // otherwise keep the palette it saw then.
+  // Updated here so clusterIcon sees the current palette.
   el._pal = pal;
   layer.clearLayers();
   let count = 0;
@@ -144,8 +140,7 @@ markerLayerUpdate = {
     });
     marker._cgpFraction = fraction;
     marker.bindPopup(() => popupHtml(station, volume), {maxWidth: 340, autoPan: true});
-    // Lazy, like the popup above it: the string is built when the reader
-    // actually hovers, not once per marker on every rebuild.
+    // Lazy: built on hover, not once per marker per rebuild.
     marker.bindTooltip(() => hoverHtml(station), {
       direction: "top",
       offset: [0, -4],
@@ -209,8 +204,7 @@ countryPills = {
 ```
 
 ```{ojs}
-// One chunk, so one card body: three chunks each got their own and stacked
-// down a card too short to hold them, clipping all three.
+// One chunk → one card body so the controls share a row.
 html`<div class="cgp-map-controls">
   <div class="cgp-map-controls-top">${viewof colorMode}${mapLegend}</div>
   ${countryPills}
@@ -223,14 +217,10 @@ html`<div class="cgp-map-controls">
 ::: {.cgp-panel}
 
 ```{ojs}
-// Created once: this cell depends only on `latest`, which never changes.
-// It must be defined in the card that shows it, because an OJS cell's node is
-// inserted where the cell is defined.
+// Defined in the card that shows it (OJS nodes live where they're defined).
 mapEl = {
   const el = html`<div class="cgp-map" data-marker-count="0" style="height:360px"></div>`;
-  // maxZoom is set here rather than left to the tile layer: the cluster group is
-  // added before any layer exists, and it refuses a map whose maximum zoom is
-  // still unbounded. 19 is the lower of the two basemaps' limits.
+  // maxZoom set before the tile layer: the cluster group needs a bounded zoom.
   const map = L.map(el, {
     zoomControl: true,
     worldCopyJump: true,
@@ -239,9 +229,7 @@ mapEl = {
   });
   map.setView([25, -30], 2);
   el._map = map;
-  // Stations group while the map is showing a continent and separate as it is
-  // zoomed in; past LABEL_ZOOM every station stands on its own and carries its
-  // price, which is the zoom at which grouping stops helping.
+  // Stations cluster at continent scale and ungroup past LABEL_ZOOM.
   el._markers = (
     clusterL.markerClusterGroup
       ? clusterL.markerClusterGroup({

@@ -6,12 +6,7 @@ title: "Trends"
 
 ```{ojs}
 //| output: false
-// Only the pages that query the release load DuckDB; the others never
-// pay for it. This replaced a MutationObserver that watched which tab
-// pane was active, which a multi-page site has no need of.
 pageWantsDb = true
-// Trends reads the daily summaries only, so it never downloads the station
-// history, the one file that grows without bound.
 pageWantsHistory = false
 ```
 
@@ -21,10 +16,8 @@ pageWantsHistory = false
 //| output: false
 mixedCurrency = currency === "Local" && trendCountry === "All countries"
 effectiveTrendMode = mixedCurrency && trendMode === "price" ? "change" : trendMode
-// Per gallon and per litre differ by a constant, so on a percentage axis they
-// draw the same lines. Dimmed rather than explained in a sentence under the
-// chart; it still sets the prices in the tooltip, which is why it is not
-// disabled outright.
+// On a percentage axis, per-gallon and per-litre draw the same lines.
+// Dimmed rather than disabled (it still affects the tooltip).
 volumeGuard = {
   const inert = effectiveTrendMode === "change";
   for (const input of (viewof volume).querySelectorAll("input")) {
@@ -107,9 +100,7 @@ viewof showBand = asField(
 
 ```{ojs}
 //| output: false
-// Static labels on purpose: if this depended on the breakdown or the currency,
-// OJS would rebuild the node and reset the reader's choice every time either
-// moved.
+// Static labels — depending on reactive values would reset the reader's choice.
 viewof trendMode = radioControl(
   "trendmode",
   [["Price", "price"], ["Change", "change"], ["Separate charts", "separate"]],
@@ -133,18 +124,14 @@ viewof trendRegions = {
       }
     }
   );
-  // Only a country breakdown has regions to pick from; with "All countries"
-  // selected there is nothing to show, so the control stands down rather than
-  // rendering an empty box.
+  // Hidden when no regions exist (all-countries view).
   if (!options.length) input.style.display = "none";
   return asField(input);
 }
 ```
 
 ```{ojs}
-// Quarto gives every chunk its own card body, so three chunks stack down the
-// card however short it is. Placing the controls in one chunk lets them sit on
-// a single row -- which is all the height they need.
+// One chunk → one card body → controls share a single row.
 html`<div class="cgp-controls-row">${[
   viewof trendCountry,
   viewof trendMode,
@@ -160,16 +147,8 @@ html`<div class="cgp-controls-row">${[
 ::: {.cgp-panel .cgp-chart-card}
 
 ```{ojs}
-// How many stations stood behind each day's median, as a strip under the chart
-// rather than a sentence beside it. `n_stations` is already queried and was
-// drawn nowhere, so a reader could not tell a real price move from a day when
-// half the stations were missing.
-//
-// The strip is read a day at a time against the chart above it, so it takes
-// that chart's width, margins and days, read back off the drawn chart, rather
-// than choosing its own. It had gutters of its own, 52px and 80px, under a
-// chart with Plot's 40px on the left and a right margin sized to its labels,
-// and no tick sat under the day it named.
+// Station-count strip below the chart: shows how many stations stood behind
+// each day's median. Borrows the chart's margins and x domain so ticks align.
 function coverageStrip(rows, {label, chart}) {
   const svg = chart.tagName.toLowerCase() === "svg" ? chart : chart.querySelector(":scope > svg");
   const width = Number(svg.getAttribute("width"));
@@ -177,9 +156,7 @@ function coverageStrip(rows, {label, chart}) {
   const [first, last] = x.domain;
   const byDay = new Map();
   for (const row of rows) {
-    // One point per series a day. Keyed on the day and the chain alone, each
-    // country's row overwrote the one before it, and the strip under a
-    // seven-country chart drew the United States and nothing else.
+    // Key on day + series so every chain in every country gets a point.
     const series = seriesOf(row);
     byDay.set(`${row.d} :: ${series}`, {
       day: toDay(row.d),
@@ -195,11 +172,9 @@ function coverageStrip(rows, {label, chart}) {
   if (data.length < 2) return "";
   return Plot.plot({
     width,
-    // Deliberately not "open stations": a dip is usually a collection failure,
-    // not a closure, and the two read very differently.
+    // "posted a price" not "open" — dips are usually collection failures.
     ariaLabel: `Stations that posted a ${label} price, by day`,
-    // Plot writes a day tick on two lines, "17" over "Sep", and a 22px gutter
-    // cut the month off every one of them.
+    // Two-line day ticks need more than Plot's default bottom margin.
     height: 82,
     marginLeft: x.range[0],
     marginRight: width - x.range[1],
@@ -221,14 +196,8 @@ function coverageStrip(rows, {label, chart}) {
   });
 }
 
-// Every chart on this page is built here, in the card that shows it, the
-// way the Map and Station cards build theirs. Two separate mechanisms
-// require it. An OJS cell's node is inserted where the cell is defined, so
-// a chart built in the hidden `output: false` chunk above is adopted by
-// that chunk and this panel stays empty. Charts also carry their own width:
-// rewrites every `Plot.plot` call to take the width and height of the cell
-// the call appears in, so a chart built in that hidden chunk is measured
-// against a container that is never visible and comes out 0 px wide.
+// Charts are built in the card that shows them: OJS inserts a cell's node
+// where it's defined, and a hidden chunk would produce a zero-width chart.
 trendView = {
   // Which chains each country has, so every chart below names a chain by the
   // same rule, and only where a country has two.
@@ -287,10 +256,7 @@ trendView = {
       ...(showDots(days.length)
         ? [Plot.dot(data, {x: "day", y: "median", r: 2, fill: (row) => COUNTRY_COLORS[row.country]})]
         : []),
-      // selectLast per series, not "rows on the global last day": a country
-      // whose feed stalls loses its label under the second rule, and that is
-      // exactly the one worth naming. `z` is explicit because `stroke` is a
-      // function, and Plot cannot infer the series from it.
+      // selectLast per series so a stalled feed keeps its label.
       Plot.text(
         data,
         Plot.selectLast({
@@ -341,10 +307,8 @@ trendView = {
     )}</div></div>`;
   }
 
-  // One chart for every country, in either currency, because what it plots is a
-  // ratio of two prices in the same currency. The unit cancels before anything
-  // is drawn, so nothing is converted and nothing is compared but the size of a
-  // move.
+  // Change view: the unit cancels (same-currency ratio), so it works in
+  // either currency.
   function allCountriesChange() {
     const byCountry = new Map();
     for (const row of trendCountryRows) {
@@ -476,10 +440,7 @@ trendView = {
         })
       )
     );
-    // A phone has room for about 60 characters across the chart, and the
-    // local label ran to 80: the end of it, the part that says whose currency,
-    // was cut off. There it keeps that part and drops "median Regular": the
-    // grade is the one lit in the bar above, and every line here is a median.
+    // Short label on narrow screens — the grade is already in the control bar.
     const label =
       currency === "USD"
         ? `Change in median ${GRADE_LABELS[grade]} since ${baseText}, in USD (%)`

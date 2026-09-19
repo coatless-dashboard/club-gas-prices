@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Check a `site-*` download against the collector's manifest, then unprefix it.
+"""Verify a `site-*` download against the collector's manifest, then unprefix.
 
-The data repository uploads the dashboard's five files into its `current`
-release under a `site-` prefix, so one download pattern fetches exactly them,
-and records each one's size and sha256 in manifest.json. `current` is rewritten
-asset by asset, so a download that straddles a publish is possible and this is
-what catches it. On success the files are left under the plain names the site
-reads, and manifest.json is removed: it describes the dataset, not the site.
+Catches a torn download that straddles a publish (the release is rewritten asset
+by asset). On success, files are renamed to the plain names the site reads.
 """
 
 from __future__ import annotations
@@ -56,10 +52,7 @@ def main(argv: list[str]) -> int:
         (root / asset).replace(root / name)
     manifest_path.unlink()
 
-    # Anything left is not one of the five. The download pattern is narrow, but
-    # the collector's release also holds `<name>.next-<token>` and
-    # `<name>.old-<token>` mid-write temporaries, and this directory is copied
-    # wholesale into the published site -- so a stray here reaches Pages.
+    # Remove strays (mid-write temporaries) that would otherwise reach Pages.
     for stray in sorted(p for p in root.iterdir() if p.name not in SITE_ASSETS):
         print(f"removing stray {stray.name}", file=sys.stderr)
         stray.unlink()

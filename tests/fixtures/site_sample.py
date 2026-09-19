@@ -1,9 +1,7 @@
-"""A small, realistic `site/data/` set, built without running the pipeline.
+"""A small, realistic `site/data/` set for local rendering and smoke testing.
 
-Every price here is a real value captured from the live sources on 2026-09-15,
-and the rates are the Frankfurter reference rates of 2026-09-14. The dashboard
-reads only `site/data/`, so this is enough to render and smoke-test the page
-locally.
+Prices are real values from 2026-09-15; rates are Frankfurter reference rates
+of 2026-09-14.
 
     uv run python tests/fixtures/site_sample.py site/data
 """
@@ -18,11 +16,8 @@ from pathlib import Path
 
 import polars as pl
 
-# Kept in step with club_gas.sitedata.with_change_flags in the data
-# repository. It is copied rather than imported because this repository holds
-# no pipeline: the sample has to carry the same `changed` and `moved_intraday`
-# columns the real history.parquet does, or the station page's change list
-# renders against a shape the site never actually receives.
+# Mirrors club_gas.sitedata.with_change_flags (copied, not imported, because
+# this repo holds no pipeline code).
 INTRADAY_EPSILON = 5e-5
 
 
@@ -61,8 +56,7 @@ UNITS_PER_USD = {
 }
 FX_RATE_DATE = "2026-09-14"
 
-# config/site.toml in the data repository, as it stands on 2026-09-18. meta.json's
-# `notice` is this prefix and then one clause per chain in the data, as a list.
+# meta.json notice: shared prefix, then one clause per chain in the data.
 NOTICE_PREFIX = (
     "Unofficial. Prices are collected from public websites and may differ from the price "
     "at the pump."
@@ -184,9 +178,7 @@ STATIONS = [
 
 # fmt: on
 
-# config/grades.csv in the data repository, as it stands on 2026-09-18. The
-# About page draws its grade table from these rows, so the sample carries the
-# real labels and specifications rather than a shorter invented set.
+# Real grade labels and specs from config/grades.csv (not a shorter invented set).
 GRADES_CSV = """\
 brand,country,grade_raw,grade,priority,label,spec,spec_source,spec_source_url
 COSTCO,US,regular,regular,1,Regular,,,
@@ -220,9 +212,7 @@ SAMS,US,MID CLR,other,1,Mid-Grade (clear),,,
 SAMS,US,PREM CLR,other,1,Premium (clear),,,
 """
 
-# Kept in step with club_gas.sitedata.GRADE_TABLE_FIELDS, in its order: the
-# fields of meta.json's `grades` rows. `brand` is what the About page names the
-# chain from.
+# Fields of meta.json's `grades` rows, mirroring club_gas.sitedata.GRADE_TABLE_FIELDS.
 GRADE_TABLE_FIELDS = (
     "country",
     "brand",
@@ -237,11 +227,7 @@ GRADE_TABLE_FIELDS = (
 
 
 def grade_table(brands: set[str]) -> list[dict]:
-    """meta.json's `grades`: the chains in the data only, as sitedata writes them.
-
-    The site names no chain it holds no prices for, so a chain whose feed is off
-    has no rows here even though config/grades.csv lists its labels.
-    """
+    """meta.json's `grades`, filtered to chains present in the data."""
     rows = []
     for entry in csv.DictReader(io.StringIO(GRADES_CSV)):
         if entry["brand"] not in brands:
@@ -253,13 +239,12 @@ def grade_table(brands: set[str]) -> list[dict]:
 
 
 def notice(brands: set[str]) -> list[str]:
-    """meta.json's `notice`, as club_gas.config builds it: the chains in the data only."""
+    """meta.json's `notice`, filtered to chains in the data."""
     return [NOTICE_PREFIX, *(NOTICES[brand] for brand in sorted(brands) if brand in NOTICES)]
 
 
 def feeds(stations: list[dict], capture_id: str) -> dict:
-    """meta.json's `feeds`: one per chain in each country, keyed and sorted as
-    club_gas.sitedata writes them. The sample's feeds all ran in its capture."""
+    """meta.json's `feeds`: one per chain in each country, keyed and sorted."""
     pairs = sorted({(station["country"], station["brand"]) for station in stations})
     return {
         f"{country}-{brand}": {
@@ -361,9 +346,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
                 continue
             entry["grades"][grade] = payload
             for day_index, day in enumerate(dates):
-                # A sine wave made every single day a change, which is exactly
-                # the question the change flags exist to answer. Prices hold for
-                # a few days and then step, which is how fuel prices move.
+                # Step function, not a sine wave — fuel prices hold then jump.
                 step = (day_index + index + offset) // (4 + (index % 3))
                 per_litre = local * (1.0 + 0.008 * ((step % 5) - 2))
                 history_rows.append(
@@ -383,8 +366,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         latest.append(entry)
 
     history = pl.DataFrame(history_rows).sort(["station_key", "grade", "capture_date"])
-    # The same flags sitedata derives, from the same helper, so the preview and
-    # the real build cannot drift apart.
+    # Same change-flag logic as the real build.
     history = with_change_flags(
         history.with_columns(
             pl.col("price_local_per_litre").alias("price_min"),
@@ -448,7 +430,7 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
     )
     summary.write_parquet(out_dir / "summary_daily.parquet", statistics=True)
 
-    # The shape club_gas.sitedata._meta writes, key for key and in its order.
+    # Matches the shape club_gas.sitedata._meta writes.
     capture_id = "2026-09-15T1817Z"
     brands = {station["brand"] for station in STATIONS}
     meta = {
@@ -463,15 +445,12 @@ def build(out_dir: Path, *, days: int = 14, end: date = date(2026, 9, 15)) -> No
         "closed_years": [],
         "grades": grade_table(brands),
         "notice": notice(brands),
-        # The page calls a country, or a chain in it, stale after this many hours
-        # without a capture.
+        # Staleness threshold in hours.
         "stale_after_hours": 12,
         "releases": {
             "current": ("https://github.com/coatless-data/club-gas-prices/releases/tag/current"),
             "all": "https://github.com/coatless-data/club-gas-prices/releases",
-            # sitedata also emits one download URL per `current` asset; the page links
-            # only `current` and `all`, but the fixture carries them so it stays
-            # substitutable for real meta.json.
+            # Full set of download URLs so the fixture is substitutable for real meta.json.
             "all_parquet": RELEASE_DL + "club-gas-all.parquet",
             "all_csv_gz": RELEASE_DL + "club-gas-all.csv.gz",
             "all_captures_parquet": RELEASE_DL + "club-gas-all-captures.parquet",

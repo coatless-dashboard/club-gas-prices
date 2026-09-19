@@ -1,10 +1,7 @@
 """Contract tests for the Render workflow and the script it runs.
 
-These assert on the literal text of the workflow file rather than on a parsed
-YAML tree, because the rules being enforced are about the literal text: GitHub
-rejects a bare `!` at the start of an `if:` value, and an action pin is only a
-pin if the ref written in the file is a commit SHA. A YAML parser normalizes
-quoting and would hide both.
+Asserts on literal text, not parsed YAML: pinned SHAs and unquoted `!` are
+text-level properties a YAML parser would normalize away.
 """
 
 from __future__ import annotations
@@ -37,11 +34,7 @@ def read() -> str:
 
 
 def step_script(name: str, **expressions: str) -> str:
-    """A render step's `run: |` block, as the script the runner would execute.
-
-    Each `${{ ... }}` the step reads is given as a keyword, its dots written as
-    underscores, so a test can run the step under the event it is about.
-    """
+    """A render step's `run: |` block with expressions substituted."""
     block = read().split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
     body = block.split("        run: |\n", 1)[1]
     script = textwrap.dedent(body)
@@ -88,7 +81,7 @@ def test_render_conventions():
 
 
 def test_render_only_reads_the_data_repository():
-    """This repository holds no capture code and must never be given a writer token."""
+    """No writer token — this repo holds no capture code."""
     text = read()
     assert text.startswith("name: Render\n")
     assert "DATA_REPO: coatless-data/club-gas-prices" in text
@@ -102,9 +95,7 @@ def test_render_only_reads_the_data_repository():
 
 def test_render_fetches_the_site_assets_by_prefix():
     text = read()
-    # Narrow patterns: a bare 'site-*' also matches the collector's reserved
-    # `<name>.next-<token>` and `.old-<token>` mid-write temporaries, and this
-    # directory is copied wholesale into the published site.
+    # Narrow patterns to exclude mid-write temporaries.
     assert "--pattern 'site-*.json' --pattern 'site-*.parquet'" in text
     assert "--pattern 'site-*'" not in text
     assert "python3 .github/verify-site-data.py site/data" in text
@@ -126,10 +117,7 @@ def test_render_stages_no_source_files_and_smoke_tests():
 
 
 def test_staging_leaves_exactly_one_copy_of_the_data(tmp_path):
-    """Quarto copies the files the pages name into _site/data as it renders, so
-    by the time the stage step runs the directory exists, and `cp -R` into it
-    nested a second copy of all five at _site/data/data. Pages then served
-    history.parquet twice, and that is the file that grows without bound."""
+    """The stage step replaces _site/data rather than nesting a copy inside it."""
     for directory in (tmp_path / "site" / "data", tmp_path / "_site" / "data"):
         directory.mkdir(parents=True)
         for name in SITE_ASSETS:
@@ -147,8 +135,7 @@ def test_staging_leaves_exactly_one_copy_of_the_data(tmp_path):
 
 
 def test_the_pull_request_render_stages_the_data_the_same_way():
-    """The Test workflow's smoke job stages the sample data the way Render
-    stages the release, so it cannot pass on a layout Pages never gets."""
+    """Both workflows stage data the same way."""
     for path in (WORKFLOW, TEST_WORKFLOW):
         text = path.read_text(encoding="utf-8")
         copies = text.count("cp -R site/data _site/data")
@@ -166,11 +153,7 @@ def test_render_deploys_only_from_the_default_branch():
 
 
 def test_every_deploying_step_is_behind_the_same_gate():
-    """One plan step decides; every step that can deploy reads only that.
-
-    Two independent conditions is how a run ends up rendering but not
-    deploying, or deploying an empty `_site`.
-    """
+    """One plan step decides; every deploying step reads only that."""
     text = read()
     gate = "if: ${{ steps.plan.outputs.render == 'true' }}"
     for step in ("Render the site", "Stage _site", "Upload the Pages artifact", "Deploy to Pages"):
@@ -190,8 +173,7 @@ def write_release(directory: Path) -> None:
     for name, body in payload.items():
         (directory / name).write_bytes(body)
         assets[name] = {"sha256": hashlib.sha256(body).hexdigest(), "size": len(body)}
-    # The real manifest also covers the six raw dataset assets, which this
-    # repository neither downloads nor verifies.
+    # The real manifest also covers raw dataset assets we don't verify.
     assets["club-gas-all.parquet"] = {"sha256": "0" * 64, "size": 1}
     (directory / "manifest.json").write_text(json.dumps({"assets": assets}), encoding="utf-8")
 
@@ -215,8 +197,7 @@ def test_verify_accepts_a_consistent_release_and_unprefixes_it(tmp_path):
 
 
 def test_verify_rejects_a_torn_release(tmp_path):
-    # A release read while the collector is renaming assets can mix two
-    # captures, which is what the retries in the workflow ride out.
+    # A mid-publish download can mix two captures.
     (tmp_path / "data").mkdir()
     write_release(tmp_path / "data")
     (tmp_path / "data" / "site-latest.json").write_bytes(b'[{"station_key":"US-1364"}]\n')
@@ -248,8 +229,7 @@ def test_verify_rejects_a_release_that_predates_the_site_assets(tmp_path):
 
 
 def test_verify_removes_a_stray_that_would_otherwise_reach_pages():
-    """`current` holds mid-write temporaries. Staging copies this directory
-    wholesale, so anything left behind is published."""
+    """Mid-write temporaries must be removed before staging."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -341,9 +321,8 @@ def test_a_scheduled_run_skips_only_what_is_already_deployed(tmp_path):
 
 
 def test_a_rebuild_reaches_the_site_without_waiting_for_a_capture(tmp_path):
-    """A Rebuild rewrites the site assets under the capture they already had.
-    Compared on capture_id alone, every scheduled run called its corrections
-    deployed until the next capture landed, most of a day on a late schedule."""
+    """A Rebuild rewrites site assets under the same capture_id; the freshness
+    check compares the whole file, not just the capture_id."""
     assert plan(tmp_path, release=REBUILT, live=BUILT) == "render=true"
 
 
@@ -353,17 +332,15 @@ def test_a_push_or_a_manual_run_always_renders(tmp_path):
 
 
 def test_the_schedule_keeps_itself_on():
-    """GitHub turns off a public repository's schedules after 60 days without
-    activity, and nothing in this repository commits. Once a week a job
-    re-enables the workflow through the API, the way the widely used keepalive
-    actions do, with the one permission that needs and nothing else."""
+    """A weekly keepalive re-enables the workflow (GitHub disables schedules
+    after 60 days without activity, and this repo never commits)."""
     text = read()
     schedule = text.split("  schedule:\n", 1)[1].split("\n  push:\n", 1)[0]
     crons = re.findall(r'(?m)^    - cron: "([^"]+)"$', schedule)
     assert crons[0] == "50 */3 * * *"
     jobs = text.split("\njobs:\n", 1)[1]
     render_job, keepalive = jobs.split("\n  keepalive:\n", 1)
-    # Its own weekly tick, which is one of the crons and not the render's.
+    # The keepalive fires on a separate weekly cron.
     tick = re.search(r"github\.event\.schedule == '([^']+)'", keepalive).group(1)
     assert tick in crons and tick != "50 */3 * * *"
     assert "if: ${{ github.event_name == 'schedule' && github.event.schedule == " in keepalive
@@ -372,13 +349,13 @@ def test_the_schedule_keeps_itself_on():
         in keepalive
     )
     assert "GH_TOKEN: ${{ github.token }}" in keepalive
-    # actions: write on this job alone: not the workflow, not the render job.
+    # actions: write scoped to this job alone.
     assert "    permissions:\n      actions: write\n" in keepalive
     assert text.count("actions: write") == 1
     assert "actions:" not in render_job
     workflow_permissions = text.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
     assert "actions" not in workflow_permissions
-    # The comment says what the call is, and what GitHub has not promised.
+    # The comment acknowledges GitHub's undocumented reset behavior.
     above = text.split("\n  keepalive:\n", 1)[0].rsplit("\n\n", 1)[1]
     comment = " ".join(line.strip().removeprefix("# ") for line in above.splitlines())
     assert "the widely used keepalive actions" in comment

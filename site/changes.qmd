@@ -7,7 +7,6 @@ title: "Changes"
 ```{ojs}
 //| output: false
 pageWantsDb = true
-// Every chart here counts the moves recorded in the station history.
 pageWantsHistory = true
 ```
 
@@ -15,16 +14,12 @@ pageWantsHistory = true
 
 ```{ojs}
 //| output: false
-// How often a posted price moved, not by how much. `changed` compares a
-// station's previous OBSERVED reading, so the denominator is transitions we
-// actually saw -- never calendar days, which we did not always look at.
+// Fraction of observed transitions where the price changed.
 changesWindowDays = 90
 ```
 
 ```{ojs}
-// Its own chunk, and NOT `output: false`: the control shared that flag with the
-// constant above it, so the drill-down existed in the DOM at zero by zero
-// pixels and no one could reach the per-station view behind it.
+// Visible chunk so the control is reachable (output: false would hide it).
 viewof changesPlace = asField(
   Inputs.select(["All US states", ...changesStates], {
     label: "Drill into",
@@ -98,9 +93,7 @@ changesByStation = db && changesStationKeys.length
 
 ```{ojs}
 //| output: false
-// Every day between the first and the last, whether or not it has a row. A band
-// scale takes its domain from the data, so a collection gap would close up and
-// the axis would say time was continuous when it was not.
+// Full date domain including gaps, so the axis stays honest about time.
 function changesDomain(rows) {
   const days = rows.map((r) => r.d).filter((d) => d);
   if (!days.length) return [];
@@ -113,9 +106,8 @@ function changesDomain(rows) {
   return out;
 }
 
-// Past roughly one cell per 3px the days stop fitting, so they bin into ISO
-// weeks. Binning sums the counts rather than averaging the rates: a mean of
-// rates would weight a thin day the same as a full one.
+// Bin into ISO weeks when daily cells get too narrow. Sums counts (not means
+// of rates) so thin days don't get equal weight.
 changesMaxBins = Math.max(14, Math.floor((chartWidth - 46) / 3))
 
 function isoWeek(day) {
@@ -150,8 +142,7 @@ function changesBinned(rows, keyName) {
   }
   const cells = [...bins.values()].map((cell) => ({
     ...cell,
-    // Absent is not unchanged. A thin cell gets no color rather than a
-    // confident 0%, because one observation is not a rate.
+    // Fewer than 3 observations → no color (one reading isn't a rate).
     rate: cell.n_obs >= 3 ? cell.n_changed / cell.n_obs : null
   }));
   const binDomain = weekly ? [...new Set(domain.map(isoWeek))] : domain;
@@ -164,8 +155,7 @@ function changesBinned(rows, keyName) {
 ::: {.cgp-panel}
 
 ```{ojs}
-// `labelOf` names a row. A station row is keyed on its station_key and shows
-// its name: keyed on the name, two stations sharing one would merge.
+// Keyed on station_key, labelled by name.
 function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => key}) {
   const {cells, binDomain} = changesBinned(rows, keyName);
   if (!cells.length) return null;
@@ -175,21 +165,15 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
 
   return brands.map((brand) => {
     const mine = cells.filter((c) => c.brand === brand);
-    // Each chain's rows are its own. Shared, every chart carried a blank row
-    // for each of the other chain's stations. Sorted by what the row shows, as
-    // before, with the key breaking a tie between two stations of one name.
+    // Each chain's rows are its own set, sorted by label then key.
     const keys = [...new Set(mine.map((c) => c.key))].sort((a, b) => {
       const [x, y] = [labelOf(a), labelOf(b)];
       return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
     });
-    // The day labels are turned 35 degrees, and a turned "2026-09-17" hangs
-    // about 50px below the axis: in Plot's default 30px gutter the bottom of
-    // every one was cut off.
+    // Rotated day labels need more room below the axis than Plot's default.
     const top = 28;
     const bottom = 54;
-    // The height holds both margins and then a full pitch for every row. It
-    // was 24px short of the margins, so each row lost 24px shared among them,
-    // and a state with one station drew its one row 0px tall.
+    // Height = margins + one full pitch per row.
     const pitch = chartWidth < 520 ? 11 : 16;
     return Plot.plot({
       width: chartWidth,
@@ -255,11 +239,8 @@ changesFigure = {
   return html`<div>${changesKeyEl()}${changesSummary}${charts}</div>`;
 }
 
-// What a cell's color means. The fill is a function, so Plot draws no legend
-// of its own, and a cell's numbers are in a tooltip that a touch screen or a
-// keyboard never raises: the blue, amber, red and gray were explained nowhere
-// on the page. The swatches are the very colors the cells are drawn in, in
-// either theme.
+// Manual legend: Plot draws none for function fills, and tooltips are
+// inaccessible on touch devices.
 function changesKeyEl() {
   return html`<div class="cgp-legend cgp-changes-key">
     <span class="cgp-legend-end">0%</span>${palette.ramp.map(
@@ -278,8 +259,7 @@ function changesKeyEl() {
 
 ```{ojs}
 //| output: false
-// One line where a paragraph would go. Both counts print, because the chain
-// with the flakier feed scores higher and a reader should be able to see it.
+// Summary line with per-chain counts.
 changesSummary = {
   const rows = changesPlace === "All US states" ? changesByState : changesByStation;
   const totals = new Map();

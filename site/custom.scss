@@ -50,9 +50,7 @@ $navbar-fg: #f4f7f8 !default;
   padding: 0.25rem 0;
 }
 
-// The caption used to start with a bare separator, which wrapped onto its own
-// line and left the dot stranded. It is its own group now and carries no
-// separator at all; the swatch stays glued to the words it explains.
+// The note fills remaining space in the legend row.
 .cgp-legend-note {
   flex: 1 1 auto;
   min-width: 0;
@@ -62,8 +60,7 @@ $navbar-fg: #f4f7f8 !default;
   font-weight: 600;
 }
 
-// Flags render at the surrounding size on every platform that has them, and as
-// two letters on the ones that do not.
+// Flags render at text size; falls back to two letters on unsupported platforms.
 .cgp-flag {
   font-size: 1.05em;
   line-height: 1;
@@ -83,36 +80,27 @@ $navbar-fg: #f4f7f8 !default;
   border-radius: 2px;
 }
 
-// An option that cannot apply right now: still readable, visibly not available,
-// and it keeps its place so the row does not reflow.
+// Visually dims an inapplicable option without removing it.
 .cgp-field > div > label.cgp-option-off {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-// page-layout: custom hands the whole width over and drops the grid's gutters
-// with it, so the page supplies its own.
-//
-// It is handed back deliberately. Spanning the viewport meant a 1600px monitor
-// got a dot plot with half of it empty and a station list one name wide per
-// 1550px line -- wider, but no more readable. A measure charts and prose can
-// both live at, centered, reads better at every size above it, and below it
-// this is just `max-width` doing nothing.
+// Centered measure that charts and prose both fit, since page-layout: custom
+// hands over the full viewport width.
 #quarto-content.page-layout-custom {
   max-width: 76rem;
   margin-inline: auto;
   padding: 1.25rem 1.75rem 0;
 }
 
-// Prose stays at a readable measure even where the page does not; a paragraph
-// 1800px wide is not readable at any font size.
+// Readable measure for prose.
 .cgp-footer-notice,
 main.content > p {
   max-width: 62rem;
 }
 
-// The notice sits at the foot of every page rather than beside the controls:
-// it is a standing statement about the whole site, not a caption on one view.
+// Site-wide notice footer.
 .cgp-footer {
   margin-top: 2.5rem;
   padding-top: 1rem;
@@ -166,8 +154,7 @@ main.content > p {
   color: var(--cgp-muted);
 }
 
-// Two links continuing the line that names the station, kept apart from it and
-// from each other by the separator's own margins.
+// Inline separators between station links.
 .cgp-station-sep {
   margin: 0 0.4rem;
   color: var(--cgp-muted);
@@ -209,16 +196,12 @@ main.content > p {
   font-variant-numeric: tabular-nums;
 }
 
-// A request URL has nowhere to break, so About's endpoint table ran 170px past
-// the edge of a phone and took the whole page sideways with it. Inside a table
-// cell a code span may break anywhere instead: the URL wraps, the page holds
-// still.
+// Let long URLs wrap inside table cells.
 td code {
   overflow-wrap: anywhere;
 }
 
-// A table with more columns than a phone has room for scrolls inside its own
-// box rather than widening the page.
+// Horizontal scroll for wide tables on narrow screens.
 .cgp-table-scroll {
   max-width: 100%;
   overflow-x: auto;
@@ -261,9 +244,7 @@ td code {
   overflow-y: auto;
 }
 
-// Quarto wraps each OJS cell in a plain block that sizes to its content, so a
-// tall list inside it overflows the card rather than scrolling. Only this card
-// holds something that can outgrow its box, so the override stays scoped to it.
+// Let the search results scroll inside the card instead of overflowing.
 .cgp-search-card .observablehq {
   display: flex;
   flex-direction: column;
@@ -271,7 +252,7 @@ td code {
   min-height: 0;
 }
 
-// The box keeps whatever height it needs; only the list below it gives way.
+// The search box keeps its height; the results list scrolls.
 .cgp-search {
   display: flex;
   flex-direction: column;
@@ -327,14 +308,8 @@ td code {
 
 
 // ---------------------------------------------------------------------------
-// Controls
-//
-// Observable Inputs ship a layout built for a notebook: a fixed-width label
-// column beside the control, which wraps into two ragged lines the moment a
-// label is longer than the column or the viewport narrows. Every control on
-// this dashboard is relabelled here as a stacked group -- caption above,
-// options below -- so the sidebar and the cards read the same way and nothing
-// depends on how wide the label happens to be.
+// Controls: stacked groups (caption above, options below) to replace
+// Observable's fixed-width label layout.
 // ---------------------------------------------------------------------------
 
 .cgp-field {
@@ -358,10 +333,7 @@ td code {
   max-width: none;
 }
 
-// Observable renders a group as:  form > label(caption) + div > label > input
-// -- the element the cell returns IS the form, so the options live one level
-// down. Each option becomes a pill so the hit target is the whole option rather
-// than the 13px dot, which is the part that was awkward to use.
+// Pill-style options: the hit target is the whole label, not just the radio dot.
 .cgp-field > div {
   display: flex;
   flex-wrap: wrap;
@@ -403,8 +375,7 @@ td code {
   outline-offset: 2px;
 }
 
-// The native control still carries the state for assistive technology and for
-// browsers without :has(), so it stays in the flow rather than display:none.
+// Native control stays in flow for assistive technology and :has() fallback.
 .cgp-field > div > label input[type="radio"],
 .cgp-field > div > label input[type="checkbox"] {
   margin: 0;
@@ -412,8 +383,7 @@ td code {
 }
 
 .cgp-field select {
-  // Chrome renders a <select> with display:flex as a bare outline -- no text,
-  // no arrow -- and something upstream was setting exactly that.
+  // display:block fixes Chrome rendering a flex <select> as a bare outline.
   display: block;
   font: inherit;
   font-size: 0.85rem;
@@ -445,8 +415,7 @@ td code {
   font-size: 0.85rem;
 }
 
-// Observable writes a fixed width onto the caption as an inline style, which
-// cuts off anything longer than its column. Only !important reaches it.
+// Override Observable's inline width style on captions.
 .cgp-field > label {
   width: auto !important;
   min-width: 0 !important;
@@ -457,9 +426,7 @@ td code {
   order: 2;
 }
 
-// Observable centers a form's items below 30em and only moves the caption back
-// to the start above it, so on a phone every caption sat centered over options
-// that start at the left edge.
+// Keep captions left-aligned (Observable centers them below 30em).
 .cgp-field:not(.cgp-field--inline) > label {
   align-self: flex-start;
 }
@@ -470,8 +437,7 @@ td code {
   width: auto;
 }
 
-// A panel holding only controls lays them out along the row instead of
-// stacking them down the left edge.
+// Controls-only panels flow horizontally.
 .cgp-controls-card {
   display: flex;
   flex-flow: row wrap;
@@ -499,9 +465,7 @@ td code {
   margin-bottom: 0.5rem;
 }
 
-// The page scrolls now, so the navigation and the three controls that drive
-// every chart have to stay put; scrolling a chart out from under its own units
-// is how a reader misreads one.
+// Sticky nav and controls so the reader never loses context.
 .navbar {
   position: sticky;
   top: 0;
@@ -531,12 +495,8 @@ td code {
   min-width: 0;
 }
 
-// On a phone the bar stacked its three groups under three captions: 236px of
-// an 844px screen, held there on every scroll because the bar is sticky, and
-// only 226px of the map left above the fold. Narrow, the captions leave the
-// screen but stay in the page for a screen reader -- the options name
-// themselves, and nobody needs "Volume" over "per US gallon" -- the pills
-// tighten, and the groups share rows.
+// On phones: captions are visually hidden (the options name themselves), pills
+// tighten, and the groups share rows to minimize sticky-bar height.
 @media (max-width: 575.98px) {
   .cgp-controlbar {
     gap: 0.3rem 0.9rem;
@@ -565,9 +525,7 @@ td code {
     gap: 0.25rem;
   }
 
-  // Observable's own margin on an option beats the `margin: 0` that
-  // `.cgp-field > div > label` gives it, on source order, and spent 13px after
-  // every pill.
+  // Override Observable's own option margins.
   .cgp-controlbar .cgp-field > div > label {
     position: relative;
     gap: 0.25rem;
@@ -580,15 +538,13 @@ td code {
     flex-basis: 100%;
   }
 
-  // The search box's 18rem floor and the count beside it came to 350px, and
-  // the count ran off the edge of the page: "762 resul".
+  // Let the search box shrink to fit narrow screens.
   .cgp-search > .cgp-field input {
     min-width: 0;
     flex: 1 1 auto;
   }
 
-  // The country jump-buttons keep to one row that scrolls sideways inside its
-  // own box, rather than three rows between the reader and the map.
+  // Country pills scroll horizontally on phones.
   .cgp-map-controls .cgp-pills {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -600,11 +556,8 @@ td code {
   }
 }
 
-// The dot inside each pill is what keeps Grade and Currency from sharing a row
-// on a phone. Where :has() can fill the chosen pill, the fill says which one is
-// chosen, so the dot leaves the screen -- still focusable, still read out, and
-// the pill carries the focus ring. Forced colors paint over that fill, so there
-// the dot stays.
+// Hide radio dots on phones where :has() fills the selected pill instead.
+// Dots stay for forced-colors mode.
 @supports selector(:has(*)) {
   @media (max-width: 575.98px) and (forced-colors: none) {
     .cgp-controlbar .cgp-field > div > label input[type="radio"] {
@@ -618,11 +571,7 @@ td code {
   }
 }
 
-// A panel groups a section under its heading. It used to draw a bordered,
-// filled box around whatever was inside -- around a single dropdown, around one
-// line of notes -- so every page read as a stack of containers and the boxes
-// said nothing the heading had not already said. The heading and the rule under
-// it carry the structure now; the panel only has to separate one from the next.
+// Panels separate sections; headings carry the structure.
 .cgp-panel {
   margin-bottom: 1.6rem;
 }
@@ -633,9 +582,7 @@ h2 {
   margin: 0 0 0.45rem;
 }
 
-// The color control, its legend and the country jump-buttons, in one flow.
-// The first two share a line while there is room and the legend wraps under it
-// when there is not; the country pills always get their own.
+// Map controls: color toggle + legend in one row, country pills below.
 .cgp-map-controls {
   display: flex;
   flex-direction: column;
@@ -662,11 +609,8 @@ h2 {
   min-width: 0;
 }
 
-// A group of stations, colored by the median of the stations inside it. The
-// plugin's own styles draw a pale blue disc that carries no meaning here, so
-// the badge is drawn from scratch. The count's color is set with the fill, by
-// inkOn: a fixed white failed contrast on most of the ramp, and a shadow under
-// it did not rescue it.
+// Custom cluster badge replacing the plugin's default blue disc. Count color
+// is set dynamically by inkOn() for WCAG AA contrast.
 .cgp-cluster {
   background: none;
   border: 0;
@@ -685,12 +629,8 @@ h2 {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 
-// What hovering a station shows.
-// Leaflet brings its own light styling and is fetched at runtime, so its
-// stylesheet lands after the theme's and wins on order at equal specificity.
-// The extra class is what beats it. These read Bootstrap's own variables --
-// the ones Quarto's light/dark switch actually changes -- rather than a
-// parallel set of tokens that has to be kept in step with it.
+// Hover tooltip. Extra class beats Leaflet's runtime-loaded defaults; keyed
+// on Bootstrap's own variables so Quarto's theme switch just works.
 .leaflet-tooltip.cgp-hover-tip {
   background: var(--bs-body-bg);
   border: 1px solid var(--bs-border-color);
@@ -719,7 +659,7 @@ h2 {
   color: var(--bs-secondary-color, var(--bs-body-color));
 }
 
-// Same story for the plugin's cluster badge and the map's own backdrop.
+// Theme-aware map backdrop and attribution.
 .leaflet-container {
   background: var(--bs-secondary-bg, var(--bs-body-bg));
 }

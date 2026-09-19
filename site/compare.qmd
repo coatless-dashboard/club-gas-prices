@@ -6,12 +6,7 @@ title: "Compare"
 
 ```{ojs}
 //| output: false
-// Only the pages that query the release load DuckDB; the others never
-// pay for it. This replaced a MutationObserver that watched which tab
-// pane was active, which a multi-page site has no need of.
 pageWantsDb = true
-// Compare reads the daily summaries only, so it never downloads the station
-// history, the one file that grows without bound.
 pageWantsHistory = false
 ```
 
@@ -39,9 +34,7 @@ compareRegionRows = db && compareCountry !== "All countries"
     `)
   : []
 
-// The newest day each key reached, and whether that is behind the newest day
-// any of them reached. Serves countries and regions alike, and a region with two
-// chains is two keys, the way a country is.
+// Newest day per key, flagging any that lag behind the global newest.
 compareRegionLatest = {
   const {newestFor, newest} = newestByKey(
     compareRegionRows,
@@ -58,8 +51,7 @@ compareRegionLatest = {
 ::: {.cgp-panel .cgp-controls-card}
 
 ```{ojs}
-// Deliberately its own select rather than shared with Trends: a control that
-// lives on one page and silently governs another is worse than two.
+// Own select, not shared with Trends — each page owns its controls.
 viewof compareCountry = asField(
   selectControl("breakdown", ["All countries", ...COUNTRY_ORDER], {
     label: "Breakdown",

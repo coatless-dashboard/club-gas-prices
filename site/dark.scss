@@ -10,7 +10,7 @@ $navbar-fg: #e6e9ec !default;
 
 /*-- scss:rules --*/
 
-// Same hue order as light mode, lifted so the markers stay visible on a dark map.
+// Lifted ramp for dark backgrounds.
 :root {
   --cgp-ramp-1: #6cb6d9;
   --cgp-ramp-2: #9ecae1;
@@ -29,16 +29,13 @@ $navbar-fg: #e6e9ec !default;
   --cgp-label: #b6bec5;
 }
 
-// OpenStreetMap ships no dark raster style, so invert the tiles and rotate the
-// hue back. Applied only when meta.json says the provider needs it.
+// Invert + hue-rotate for providers without a dark tile style.
 .cgp-map.cgp-tiles-invert .leaflet-tile-pane {
   filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.7);
 }
 
-// The popup, tooltip, attribution and container colors live in custom.scss
-// now, keyed on Bootstrap's variables, so they follow the theme switch without
-// a second set of values to keep in step. Only the tile filter is genuinely
-// dark-specific.
+// Only the tile filter is dark-specific; popup/tooltip colors are in
+// custom.scss, keyed on Bootstrap variables.
 
 .cgp-results button:hover,
 .cgp-results button:focus-visible {

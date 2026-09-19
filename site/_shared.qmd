@@ -1,5 +1,4 @@
-<!-- Included by every page. Each page is its own OJS runtime, so these
-     cells are evaluated once per page rather than shared between them. -->
+<!-- Included by every page; each is its own OJS runtime. -->
 
 ```{ojs}
 //| output: false
@@ -7,9 +6,7 @@ LITRES_PER_GALLON = 3.785411784
 
 COUNTRY_ORDER = ["US", "CA", "MX", "GB", "AU", "JP", "TW"]
 
-// `X = ({...})` makes Quarto's OJS cell splitter swallow the rest of the
-// chunk, silently: every later cell in it goes undefined. Objects are
-// returned from a block cell instead.
+// `X = ({...})` silently breaks Quarto's OJS cell splitter; use a block.
 COUNTRY_NAMES = {
   return {
     US: "United States",
@@ -22,9 +19,8 @@ COUNTRY_NAMES = {
   };
 }
 
-// Okabe-Ito, which stays distinguishable for the common color-vision
-// deficiencies. TW takes a brown in place of Okabe-Ito yellow, which is
-// illegible on a light background.
+// Okabe-Ito for color-vision accessibility; brown replaces yellow for TW
+// (yellow is unreadable on a light background).
 COUNTRY_COLORS = {
   return {
     US: "#0072B2",
@@ -56,9 +52,8 @@ theme = Generators.observe((notify) => {
   const read = () => (body.classList.contains("quarto-dark") ? "dark" : "light");
   let current = read();
   notify(current);
-  // Only emit on a real change. Leaflet rewrites body's class list during a
-  // click, and re-emitting the same theme there rebuilt the marker layer out
-  // from under the popup that click had just opened.
+  // Only emit on a real change; Leaflet transiently rewrites body's classes
+  // during clicks and would trigger false marker rebuilds.
   const observer = new MutationObserver(() => {
     const next = read();
     if (next === current) return;
@@ -94,31 +89,14 @@ palette = {
   };
 }
 
-// Each page declares whether it queries the release. A page that does not --
-// the Map and About -- never downloads DuckDB-WASM at all. In the dashboard
-// this took a MutationObserver watching which tab pane was active, because
-// every cell of every page ran at load; a site with a page per view does not
-// need one.
-// Parquet handed to DuckDB as BYTES, never as a URL.
+// Pages that don't query skip DuckDB-WASM entirely.
 //
-// Given a plain URL, DuckDB-WASM reads Parquet with range requests. GitHub
-// Pages stores these files gzipped and answers ranges against the compressed
-// copy: it reports the compressed length and 416s anything past it. DuckDB
-// then looks for the footer at that length, finds gzip rather than PAR1, and
-// every page that queries dies on "No magic bytes found at end of file".
+// Parquet is loaded as bytes, not a URL: GitHub Pages gzips files and ranges
+// over the compressed copy, which breaks DuckDB-WASM's range-based reader.
+// A blob: URL from a whole-file fetch sidesteps this.
 //
-// One ordinary fetch has none of that problem, because the browser undoes the
-// encoding before we see the bytes. Handing DuckDBClient a file whose url() is
-// a blob: is the stdlib's own signal to registerFileBuffer instead of
-// registerFileURL, so this takes a supported path and not a private one.
-//
-// FileAttachment is called with a literal both times on purpose: Quarto
-// resolves those paths when it renders, and a computed one 404s.
-//
-// history.parquet is fetched whole, for the reason above, and it is the file
-// that grows without bound. So only a page that queries it -- Changes and
-// Station, declared by pageWantsHistory -- downloads it; on Compare and
-// Trends the table is simply not registered.
+// FileAttachment paths must be literals (Quarto resolves them at render).
+// history.parquet grows without bound, so only pages that query it download it.
 db = {
   if (!pageWantsDb) return null;
   const buffered = async (file, name) => {
@@ -144,9 +122,8 @@ db = {
   return DuckDBClient.of({
     summary_daily,
     ...(history ? {history} : {}),
-    // The array already fetched for the map, projected to the three columns
-    // SQL needs. Registering the FileAttachment instead would download
-    // stations.json a second time.
+    // Reuse the already-fetched array; registering the FileAttachment would
+    // download stations.json a second time.
     stations: stationsAll.map((s) => ({
       station_key: s.station_key,
       country: s.country,
@@ -164,15 +141,10 @@ nowTick = Generators.observe((notify) => {
 
 ```{ojs}
 //| output: false
-// The three controls that mean the same thing on every page. Each page is its
-// own document, so their values have to survive a real navigation. They live in
-// the query string rather than in storage, because a link has to carry what the
-// sender was looking at: with storage, the same URL shows two people different
-// units and neither can tell.
+// Controls live in the query string so a shared link carries what the sender
+// was looking at.
 CONTROL_PARAMS = {
-  // Every radio whose name appears here round-trips through the query string,
-  // so a link carries what the sender was looking at. The two page-local radios
-  // were already built by radioControl and only ever lacked an entry.
+  // Radios listed here round-trip through the query string.
   return {grade: "grade", currency: "cur", volume: "vol", colormode: "color", trendmode: "view"};
 }
 
@@ -193,13 +165,8 @@ function withControls(href) {
   return url.pathname.split("/").pop() + url.search + url.hash;
 }
 
-// Ticks on days, never between them. Given a count, Plot splits a short daily
-// series into hours -- "12 AM Sep 17, 12 PM, 12 AM Sep 18" for data that only
-// ever has one value a day. So a history with fewer days than the chart has
-// room for ticks gets each of its days as a tick, which Plot labels as a day.
-// A longer one gets the count, which is then at most one tick a day, and Plot
-// picks round days, weeks or months. `room` is the chart's width, so a narrow
-// chart thins out instead of crowding.
+// Plot ticks a short series at sub-day intervals; this forces ticks on whole
+// days only, since every series here holds one value per UTC day.
 function dayTicks(rows, room = chartWidth) {
   const days = new Set(
     (rows || []).map((row) => {
@@ -218,15 +185,8 @@ function dayTicks(rows, room = chartWidth) {
   return Array.from({length: span + 1}, (_, i) => new Date(times[0] + i * 864e5));
 }
 
-// A dashboard rewrote every Plot.plot call to inject the card's width. A site
-// does not, and a chart that says nothing falls to Plot's 640px default and
-// stops being responsive.
-//
-// Nor is the OJS `width` builtin the measure. Quarto takes it from <main>, and
-// a custom page layout has none, so it falls back to the body: the whole
-// window. The page is held to a narrower measure than that, and a chart drawn
-// to the window's width was shrunk to fit the page -- at 1440px every label
-// came out at 78% of its size, under 8px. This reads the box the charts sit in.
+// OJS `width` reads <main>, which a custom layout lacks — it falls back to the
+// full window, and charts shrink to fit. This measures the actual content box.
 contentWidth = Generators.observe((notify) => {
   const el = document.getElementById("quarto-content") || document.body;
   const read = () => {
@@ -255,8 +215,7 @@ function radioControl(name, entries, value, label) {
   const input = Inputs.radio(new Map(entries), {label, value: start});
   input.setAttribute("data-control", name);
   input.classList.add("cgp-field");
-  // Stable hooks for the smoke test: Observable Inputs give the radios no
-  // value attribute of their own.
+  // Stable hooks for the smoke test.
   input.querySelectorAll("input[type=radio]").forEach((el, i) => {
     el.setAttribute("data-value", keys[i]);
   });
@@ -270,8 +229,7 @@ function radioControl(name, entries, value, label) {
   return input;
 }
 
-// A select with the hooks radioControl gives its radios: an Observable Inputs
-// option's value is its index, which says nothing about what it selects.
+// Like radioControl, but for a select.
 function selectControl(name, values, options) {
   const input = Inputs.select(values, options);
   input.setAttribute("data-control", name);
@@ -281,8 +239,7 @@ function selectControl(name, values, options) {
   return input;
 }
 
-// Every in-site link carries the controls forward. Without this the state
-// silently resets on each navigation, which is the failure mode to watch for.
+// Carry controls forward on in-site links so navigation preserves state.
 controlLinkCarrier = {
   const onClick = (event) => {
     const link = event.target.closest && event.target.closest("a[href]");
@@ -296,8 +253,7 @@ controlLinkCarrier = {
   return true;
 }
 
-// Observable Inputs come with a notebook layout; `cgp-field` restyles them as
-// stacked groups so every control on the page reads the same way.
+// Restyle Observable Inputs as stacked groups.
 function asField(input, {inline = false} = {}) {
   input.classList.add("cgp-field");
   if (inline) input.classList.add("cgp-field--inline");
@@ -317,9 +273,7 @@ function perVolume(valuePerLitre, vol) {
   return vol === "gal" ? valuePerLitre * LITRES_PER_GALLON : valuePerLitre;
 }
 
-// A hover tip. `title:` on a mark only gets the browser's own tooltip, which
-// takes a second to appear and cannot be styled; Plot's tip mark follows the
-// pointer and reads the same channels.
+// Plot's styled tip, in place of the browser's slow native tooltip.
 function tipStyle() {
   return {
     fill: palette.surface,
@@ -329,10 +283,8 @@ function tipStyle() {
   };
 }
 
-// Leaflet.markercluster attaches itself to the global L, so it is loaded as a
-// script tag rather than imported. Everything the map does waits on this cell,
-// which resolves to L either way: if the CDN is unreachable the map still draws,
-// just without grouping.
+// Leaflet.markercluster patches the global L. Falls back gracefully: if the
+// CDN is unreachable the map draws without grouping.
 clusterL = {
   const CDN = "https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/";
   if (!L.markerClusterGroup) {
@@ -342,11 +294,8 @@ clusterL = {
       link.href = CDN + file;
       document.head.appendChild(link);
     }
-    // The plugin is a UMD bundle, and OJS provides an AMD `define`: loaded as a
-    // plain script it registers as an anonymous module and never patches the
-    // global L the map uses. Running it with `define`, `module` and `exports`
-    // shadowed as parameters sends it down its browser branch instead. Blanking
-    // the real globals would do it too, and breaks every cell still loading.
+    // Shadow define/module/exports to force the UMD's browser branch (OJS
+    // provides AMD `define`, which would intercept the module).
     try {
       const response = await fetch(CDN + "leaflet.markercluster.js");
       if (!response.ok) throw new Error(`markercluster: HTTP ${response.status}`);
@@ -447,25 +396,15 @@ currencyOf = {
   return map;
 }
 
-// The collector writes the staleness window into meta.json; 12 hours is used
-// only if that key is missing or unusable.
+// Staleness window from meta.json; 12h fallback.
 staleAfterHours = {
   const value = Number(meta.stale_after_hours);
   return Number.isFinite(value) && value > 0 ? value : 12;
 }
 
-// What the freshness notice checks, each under the name it gives it. The
-// country block takes the newest success across a country's feeds, so with
-// two chains in one country one of them could stop for days while the country
-// still read fresh. Where meta.json lists its feeds, each is checked on its
-// own and named the way every chart names a chain: by country, and by chain
-// too where the country has two. A feed of a chain the data holds no station
-// of is left out, because the site names no chain it shows nothing of.
-//
-// A country none of whose feeds is listed is read by its country block, as
-// every country is when meta.json lists no feeds at all. The collector leaves
-// out a feed the capture skipped, so a capture run for some countries only
-// listed the others' feeds nowhere, and the notice stopped checking them.
+// Per-feed freshness where meta.json lists feeds (naming the chain where a
+// country has two); falls back to the country block otherwise. Feeds of chains
+// with no stations in the data are omitted.
 freshnessSources = {
   const feeds = Object.values(meta.feeds || {});
   const shown = new Set(stationsAll.map((station) => station.brand).filter(Boolean));
@@ -515,10 +454,8 @@ countryBounds = {
   return out;
 }
 
-// A shared price axis needs a single currency. USD always is one; local prices
-// are one only when the chart is scoped to a single country, because a
-// country's regions all price in the same currency. Everywhere else the axis
-// has to carry change rather than price.
+// A shared price axis needs one currency; local prices work only inside a
+// single country (whose regions all share a currency).
 function gradeRowHtml(label, entry, vol) {
   const digits = vol === "gal" ? 3 : 4;
   const unit = vol === "gal" ? "/gal" : "/L";
@@ -586,8 +523,7 @@ function popupHtml(station, vol) {
   return `<div class="cgp-popup">${parts.join("")}</div>`;
 }
 
-// The last point of whichever nearby station sits highest at the end of the
-// window, so its label does not land on top of another line.
+// Label goes on whichever nearby station sits highest at the series end.
 function topNeighbour(rows) {
   if (!rows.length) return [];
   const lastDay = Math.max(...rows.map((row) => row.day.getTime()));
@@ -596,9 +532,7 @@ function topNeighbour(rows) {
   return [atEnd.reduce((best, row) => (row.value > best.value ? row : best))];
 }
 
-// Plot's color legend keys a color scale; what needs explaining on the
-// compare chart is a shape, so the key is HTML and reuses the map legend's
-// classes. It names marks and never units, so it reads true in either currency.
+// HTML legend for marks (dot and bar), currency-agnostic.
 function spreadKeyEl(dotWords, barWords, note) {
   return html`<div class="cgp-legend">
     <span class="cgp-swatch cgp-swatch-dot" style=${"background:" + palette.muted}></span>
@@ -609,10 +543,8 @@ function spreadKeyEl(dotWords, barWords, note) {
   </div>`;
 }
 
-// The earliest day every series covers: the LATEST of their first days, not the
-// earliest. A shared "change since <date>" axis needs one date that every line
-// has a real reading for; anchoring each line on its own first day and printing
-// one date on the axis is exactly the claim this view exists to avoid.
+// The latest of every series' first day — so the shared "change since" axis
+// has one date all lines actually cover.
 function commonBaseDay(seriesList) {
   const firsts = seriesList
     .map((rows) => (rows.length ? rows[0].day.getTime() : null))
@@ -620,16 +552,13 @@ function commonBaseDay(seriesList) {
   return firsts.length ? new Date(Math.max(...firsts)) : null;
 }
 
-// The reading a series is measured from: the base day, or the first day after
-// it that has a value. A feed that gapped is anchored on its own first day and
-// says so in its tooltip rather than being silently rebased.
+// The reading a series is measured from: base day, or its first day after it.
 function anchorRow(rows, baseDay) {
   if (!baseDay) return null;
   return rows.find((row) => row.day >= baseDay && row.value != null) || null;
 }
 
-// A ratio of two values in the SAME currency, so the unit cancels before
-// anything is plotted.
+// Same-currency ratio; the unit cancels.
 function pctFrom(value, base) {
   return value == null || !(base > 0) ? null : (value / base - 1) * 100;
 }
@@ -639,34 +568,22 @@ function fmtPct(value) {
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
-// A share, not a change. fmtPct signs its output because it reads a movement
-// against a baseline; "+18% of readings moved" says something else entirely.
+// Unsigned share, not a signed change.
 function fmtShare(value) {
   if (value == null || !isFinite(value)) return "—";
   return `${value.toFixed(1)}%`;
 }
 
-// tableau10, the only ordinal scheme Plot 0.6.11 ships that suits this, has ten
-// colors. More series than that and it cycles without saying so.
+// tableau10 has ten colors; beyond that Plot silently cycles them.
 PALETTE_SERIES_CAP = 10;
 
-// A dot per reading is a good mark while the readings are far apart and a
-// texture once they are not: past roughly one every four pixels it stops
-// marking anything and starts implying a precision the line already carries.
-// At four captures a day this arrives after about seven months.
+// Dots add value when sparse; past ~1 per 4px they become noise.
 function showDots(pointsPerSeries, plotWidth = 790) {
   return pointsPerSeries <= plotWidth / 4;
 }
 
-// Stations behind the latest day, from a column the query already selects and
-// nothing drew.
-//
-// summary_daily is keyed on brand as well as country, so a country with two
-// chains has two rows a day, and `seriesOf` is the grouping every caller should
-// use. A chart that draws every series stands on all of their stations, so the
-// count adds the series up: taking the largest one reported the United States
-// alone under a seven-country chart. Asked about one series, it is that series'
-// count and nothing more.
+// A series is a chain in a country (summary_daily is keyed on both). The
+// station count adds series up — taking the max alone would undercount.
 function seriesOf(row) {
   return row.brand ? `${row.country}-${row.brand}` : row.country;
 }
@@ -688,14 +605,8 @@ function latestStationCount(rows, series) {
   return total;
 }
 
-// Where the label at the end of each line goes, and how it reads. The labels
-// sat centered 14px past each line's last point, so "United Kingdom" was
-// struck through by its own line and "United States · Sam's Club" ran off the
-// chart and was cut off. They start just past the point now, in a right margin
-// sized to the longest one at about 5.2px a character of Plot's 10px type. A
-// quarter of the chart is the most that margin may take, so a phone keeps its
-// plot; a label too long for that puts its chain on a line under its place,
-// and anything still too long wraps to what the margin holds.
+// Right margin sized to the longest end label (~5.2px/char of Plot's 10px
+// type), capped at a quarter of the chart width. Long labels split on " · ".
 function endLabelSpace(labels) {
   const room = Math.floor(chartWidth / 4);
   const width = (texts) => Math.ceil(14 + 5.2 * Math.max(0, ...texts.map((s) => s.length)));
@@ -710,21 +621,9 @@ function endLabelSpace(labels) {
   };
 }
 
-// Plot 0.6.11 sets each end label at its own line's last point and has no pass
-// that moves one out of another's way, so lines that end at nearly the same
-// value printed their names on top of each other: Japan over Taiwan on the
-// Trends chart, and on the Station chart "nearest 5 stations" over the median's
-// label. This runs on the drawn chart. It takes the end labels top to bottom
-// and moves each run of colliding ones apart by as little as clears them, the
-// run centered on the points its labels name and never past the top or bottom
-// of the plot. Only the height moves; x, color and text stay as Plot drew them.
-//
-// The chart is not on the page yet, so nothing can be measured. A label is
-// taken as its lines of the chart's type plus four tenths of a line: one line
-// of Plot's 10px type draws a box 12px tall, and the rest leaves room for a
-// `system-ui` font with taller ascenders than that. A mark takes part by
-// carrying `ariaDescription: END_LABELS`, which is also how the smoke test
-// finds the labels to check.
+// Plot doesn't move overlapping end labels apart, so we do it post-render.
+// Labels marked with `ariaDescription: END_LABELS` are spaced vertically to
+// clear each other, staying within the plot's y range.
 END_LABELS = "line-end labels"
 
 function spreadEndLabels(figure) {
@@ -746,14 +645,12 @@ function spreadEndLabels(figure) {
       return {text, x, rest, shift, want: shift + Number(y), height: (lines + 0.4) * size};
     })
     .sort((a, b) => a.want - b.want);
-  // More labels than the plot is tall share the shortfall, rather than the
-  // last of them being pushed off the bottom.
+  // Share the shortfall when labels can't all fit.
   const total = labels.reduce((sum, label) => sum + label.height, 0);
   const squeeze = Math.min(1, (bottom - top) / total);
   for (const label of labels) label.height *= squeeze;
-  // A run of colliding labels is set as one block, at the mean of where its
-  // labels want to be. A block that then reaches the one above it joins it,
-  // and the two are set again as one.
+  // Colliding labels form a block centered on the mean of their ideal y
+  // positions; blocks that still touch are merged.
   const place = (members) => {
     let height = 0;
     let ideal = 0;
@@ -784,7 +681,7 @@ function spreadEndLabels(figure) {
   return figure;
 }
 
-// What the chart covers, said once rather than hovered for.
+// Chart span and station count, stated once.
 function coverageNote(days, from, to, stations) {
   const span = `${days} day${days === 1 ? "" : "s"}, ${from} to ${to}`;
   return stations ? `${span} · ${stations} stations on the latest day.` : `${span}.`;
@@ -794,9 +691,7 @@ function dayText(date) {
   return date.toISOString().slice(0, 10);
 }
 
-// Continues the line that already names the place and the station, rather than
-// sitting under it as a row of its own: these are two short links about the
-// station just named, and a line of their own read as a section.
+// Inline links continuing the station's name line.
 function stationLinksEl(meta) {
   const directions = directionsUrl(meta);
   const warehouse = warehouseUrl(meta);
@@ -820,14 +715,8 @@ function stationLinksEl(meta) {
   )}</span>`;
 }
 
-// Costco publishes a store page per warehouse on its SAP storefronts, but only
-// some of them answer at the bare path the store feed gives. Checked on
-// 2026-09-16: mx, au and jp return 200; co.uk and com.tw return 404 both bare
-// and locale-prefixed, and the US and Canadian feeds carry no store URL at all.
-// Only the three that answer get a link.
-// Written as a block with an explicit return, the way every other constant in
-// this file is: in OJS `NAME = {…}` is a block, not an object literal, and the
-// parenthesised form does not survive here either.
+// Only storefronts that actually respond at the bare path get a link.
+// MX, AU, JP return 200; GB, TW return 404; US and CA carry no store URL.
 WAREHOUSE_PAGE = {
   return {
     MX: {base: "https://www.costco.com.mx/store/", field: "alt_id"},
@@ -842,9 +731,7 @@ function warehouseUrl(meta) {
   return name ? spec.base + encodeURIComponent(name) : null;
 }
 
-// Google's Maps URLs API. Coordinates rather than the address string: they are
-// unambiguous, and address quality varies a lot between these seven countries.
-// The address is the fallback for a station captured without coordinates.
+// Coordinates first (unambiguous across seven countries); address as fallback.
 function directionsUrl(meta) {
   if (!meta) return null;
   if (meta.lat != null && meta.lon != null) {
@@ -858,9 +745,7 @@ function directionsUrl(meta) {
     : null;
 }
 
-// Consecutive readings where the price moved, newest first. Derived from the
-// series already fetched for the chart rather than a second query, and it
-// carries what it moved FROM, which the flag alone does not.
+// Consecutive price changes, newest first, with the from-price included.
 function priceChanges(rows, limit = 30) {
   const byGrade = new Map();
   for (const row of rows) {
@@ -888,12 +773,10 @@ function priceChanges(rows, limit = 30) {
   return out.slice(0, limit);
 }
 
-// The chain a country's solid line belongs to. Every country has Costco; only
-// the United States has a second, so the second is the one that gets dashed.
+// The primary chain gets solid lines; the secondary one gets dashed.
 PRIMARY_BRAND = "COSTCO"
 
-// The chains each country has among `rows`. Built from what the caller is about
-// to draw, so a label names a chain only where the reader is looking at two.
+// Chains per country, so labels name a chain only where a country has two.
 function chainsByCountry(rows) {
   const out = new Map();
   for (const row of rows) {
@@ -904,29 +787,21 @@ function chainsByCountry(rows) {
   return out;
 }
 
-// The chain's name where a label needs it, and "" where it does not. The
-// country alone is enough where it has one chain, which is everywhere but the
-// United States; naming the chain only where it disambiguates keeps six of
-// seven countries reading the way they always did. Where a country has two,
-// both are named: "United States" beside "United States · Sam's Club" reads as
-// the national figure, which is the pooled number this site never draws. A
-// chain other than the primary one is named even on its own, so a day Costco's
-// feed failed cannot pass Sam's Club off under the country's name.
+// The chain name where disambiguation is needed, "" otherwise. Both chains are
+// named in a two-chain country to avoid implying a pooled national figure.
 function chainTag(country, brand, chains) {
   const shared = chains != null && chains.has(country) && chains.get(country).size > 1;
   if (!brand || (brand === PRIMARY_BRAND && !shared)) return "";
   return BRAND_NAMES[brand] || brand;
 }
 
-// The primary chain first and the rest by code, so a country's rows and a key's
-// entries always come in the same order.
+// Primary chain first, then alphabetical.
 function chainOrder(a, b) {
   if (a === b) return 0;
   return a === PRIMARY_BRAND ? -1 : b === PRIMARY_BRAND ? 1 : a < b ? -1 : 1;
 }
 
-// A place's name, and its chain where chainTag says so. The place is a country
-// or a region inside one; either way it is the country that has the chains.
+// Place name, with chain appended where chainTag says to.
 function placeLabel(place, country, brand, chains) {
   const chain = chainTag(country, brand, chains);
   return chain ? `${place} · ${chain}` : place;
@@ -937,9 +812,7 @@ function seriesLabel(country, brand, chains) {
   return placeLabel(COUNTRY_NAMES[country] || country, country, brand, chains);
 }
 
-// Which line is which chain, for a chart whose legend already spends its colors
-// on something else. Solid is the primary chain and dashed the other, the way
-// every line on the site draws them.
+// Solid/dashed line key for charts whose color legend is spent on regions.
 function chainKeyEl(brands) {
   return html`<div class="cgp-legend">${[...brands].sort(chainOrder).map(
     (brand) => html`<svg width="22" height="12" aria-hidden="true"><line x1="0" x2="22" y1="6"
@@ -954,15 +827,12 @@ BRAND_NAMES = {
   return {COSTCO: "Costco", SAMS: "Sam's Club"};
 }
 
-// The chain, by name. Falls back to the raw code so an unrecognised brand reads
-// oddly rather than reading as the wrong company.
+// Human-readable chain name; falls back to the raw code.
 function brandName(meta) {
   return (meta && BRAND_NAMES[meta.brand]) || (meta && meta.brand) || "The chain";
 }
 
-// What a station's status means, in words. A station is never removed from the
-// record once seen, so every one of these describes a station that is still
-// here with all of its history -- only its listing has changed.
+// Human-readable status. Stations are never removed, only delisted.
 function statusSentence(meta) {
   if (!meta) return "";
   if (meta.status === "closed") {
@@ -974,9 +844,7 @@ function statusSentence(meta) {
   return "Currently listed.";
 }
 
-// The rate the USD column was converted at, stored with the reading rather than
-// looked up now, so the figure shown is the one the conversion used. A station
-// that prices in USD has nothing to convert and says so.
+// Exchange rate stored with the reading, so past USD values are authentic.
 function rateNote(station) {
   const entry =
     station &&
@@ -997,8 +865,7 @@ function rateNote(station) {
     (${entry.fx_source}).</div>`;
 }
 
-// The country's flag, from its two-letter code. Regional indicator symbols sit
-// at U+1F1E6 in the same order as A-Z.
+// Country flag from its ISO code via regional indicator symbols.
 function countryFlag(code) {
   if (!code || code.length !== 2) return "";
   return String.fromCodePoint(
@@ -1006,9 +873,7 @@ function countryFlag(code) {
   );
 }
 
-// What hovering a station shows: enough to compare it with its neighbours
-// without opening anything. The click popup keeps the full detail -- every
-// grade as published, the rate used, and the link into its history.
+// Quick-glance hover; the click popup has full detail.
 function hoverHtml(station) {
   const entry =
     gradeEntry(station, "regular") ||
@@ -1021,11 +886,8 @@ function hoverHtml(station) {
     .filter(([, price]) => price != null)
     .map(([label, price]) => `${label} <b>${fmtNumber(price, digits)}</b>`);
   const place = [station.city, station.region].filter((v) => v).join(", ");
-  // `new Date()`, not `nowTick`: reading the tick made this cell a dependent of
-  // a generator that fires every 60 s, so markerLayerUpdate re-ran, cleared the
-  // layer and rebuilt every marker on a timer -- closing whatever popup the
-  // reader had open. popupHtml has always read the clock directly for the same
-  // reason.
+  // `new Date()`, not `nowTick` — subscribing to the 60s generator would
+  // rebuild every marker on a timer, closing open popups.
   const age = hoursAgo(station.captured_at_utc, new Date());
   const parts = [
     `<div class="cgp-hover-name">${escapeHtml(station.name)}</div>`,
@@ -1052,8 +914,7 @@ function hoverHtml(station) {
   return `<div class="cgp-hover">${parts.join("")}</div>`;
 }
 
-// A cluster is colored by the median of the stations inside it, so a group
-// still reads as cheap or dear rather than as a neutral blob.
+// Cluster color = median of its stations' fractions.
 function clusterIcon(el, cluster) {
   const pal = el._pal || palette;
   const fractions = cluster
@@ -1061,8 +922,7 @@ function clusterIcon(el, cluster) {
     .map((marker) => marker._cgpFraction)
     .filter((f) => f != null)
     .sort((a, b) => a - b);
-  // A true median: with two stations the upper one alone would paint the whole
-  // group its color.
+  // True median, not just the max.
   const mid = fractions.length / 2;
   const median = !fractions.length
     ? null
@@ -1081,11 +941,8 @@ function clusterIcon(el, cluster) {
   });
 }
 
-// The count on a cluster is small text on whichever ramp step the group's
-// median lands on. It was white on every step, which fails WCAG AA's 4.5:1 on
-// most of them -- 1.7:1 on the amber, the step most groups land on -- so the
-// ink is whichever of these two stands out more from this fill. Every step of
-// both themes' ramps, and the gray, clears 4.5:1 one way or the other.
+// Cluster count ink: whichever of these two meets WCAG AA (4.5:1) against
+// the fill. Both themes' full ramp clears the threshold one way or the other.
 CLUSTER_INKS = ["#ffffff", "#111418"]
 
 // WCAG 2's relative luminance of a "#rgb", "#rrggbb" or "rgb(…)" color.
@@ -1117,14 +974,11 @@ function inkOn(fill) {
   );
 }
 
-// A graduated symbol: costlier stations draw larger, and every symbol grows with
-// zoom. Zoomed out, small dots keep a continent readable instead of merging into
-// one blob; zoomed in, the symbols separate and carry their price.
+// Graduated symbol: costlier stations draw larger, all grow with zoom.
 function markerRadius(zoom, fraction) {
   const base = Math.min(11.5, 3.4 + zoom * 0.7);
   const weight = fraction == null ? 0.7 : 0.62 + fraction * 0.7;
-  // Never below 4px: a symbol smaller than that is hard to see and harder to
-  // hit, which costs more than the extra overlap it saves.
+  // Floor at 4px — any smaller is hard to see and harder to tap.
   const r = Math.max(4, Math.min(14, base * weight));
   return Math.round(r * 10) / 10;
 }
@@ -1136,8 +990,7 @@ function usdFraction(station, grade, vol, domain) {
   return Math.min(1, Math.max(0, (usd - domain[0]) / (domain[1] - domain[0])));
 }
 
-// Above this zoom the map is showing a place rather than a hemisphere, so
-// grouping stops helping and every station stands on its own.
+// Above this zoom, stations ungroup and stand on their own.
 LABEL_ZOOM = 8;
 
 function applyZoomStyling(el) {
@@ -1150,7 +1003,7 @@ function applyZoomStyling(el) {
   });
 }
 
-// Rebuilt whenever Grade, Currency, Volume or the color mode changes.
+// Rebuilds on any control change.
 ```
 
 ```{ojs}
@@ -1174,9 +1027,7 @@ compareRows = db
     `)
   : []
 
-// Each series uses its own newest day that has stations; an older day is stale.
-// A series is a chain in a place, never the place alone: keyed on the country,
-// whichever chain had the newer day silently stood in for both.
+// Newest day per series (chain in a place), not per place alone.
 function newestByKey(rows, keyOf) {
   const newestFor = new Map();
   for (const row of rows) {
@@ -1279,8 +1130,7 @@ function onStationPage() {
   return /(^|\/)station(\.html)?$/.test(location.pathname.replace(/\/$/, "/index"));
 }
 
-// One place that knows what a station's URL looks like, so the popups, the
-// search results, the neighbour lists and the channel cannot disagree.
+// Single source of truth for station URLs.
 function stationHref(key, {carry = true} = {}) {
   const base = "station.html?station=" + encodeURIComponent(key);
   return carry ? withControls(base) : base;
@@ -1332,8 +1182,7 @@ selectedLatest = selectedStation
   : null
 
 nearestStations = {
-  // A station with no current price still has coordinates in its record, and
-  // its neighbours are exactly what a reader wants when it has stopped posting.
+  // Neighbours are useful even for stations that stopped posting.
   const origin = selectedLatest || selectedMeta;
   if (!origin || origin.lat == null) return [];
   return latest
@@ -1354,8 +1203,7 @@ nearestStations = {
     .slice(0, 5);
 }
 
-// A `?station=` on a page that never loaded history would otherwise query a
-// table that page never registered.
+// Guard: pages that didn't register history can't query it.
 stationHistoryRows = {
   if (!db || !pageWantsHistory || !selectedMeta) return [];
   const keys = [selectedMeta.station_key, ...nearestStations.map((row) => row.station_key)];
@@ -1374,9 +1222,7 @@ stationHistoryRows = {
   `);
 }
 
-// The median of the station's own chain. A state both chains serve has one
-// row a day for each, and read together they drew one line alternating
-// between two companies' prices under a single "FL median".
+// Median for the station's own chain (not the other chain in the same region).
 stationMedianRows = {
   if (!db || !selectedMeta) return [];
   const level = selectedMeta.region == null ? "country" : "region";

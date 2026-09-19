@@ -1,4 +1,4 @@
-"""The sample site data used to render and smoke-test the dashboard locally."""
+"""Tests for the sample site data used to render and smoke-test locally."""
 
 from __future__ import annotations
 
@@ -32,10 +32,7 @@ SUMMARY_COLUMNS = [
     "p25_usd_per_litre",
     "p75_usd_per_litre",
 ]
-# The two parquet schemas the pages query, restated here because the code that
-# writes the real ones lives in the data repository. This is the seam: if
-# `club_gas.sitedata` ever changes a column, this file is what has to change
-# with it, and these two tests are what fail if it does not.
+# Parquet schemas restated from the data repo — the seam that catches schema drift.
 HISTORY_COLUMNS = [
     "capture_date",
     "station_key",
@@ -48,9 +45,7 @@ HISTORY_COLUMNS = [
     "changed",
     "moved_intraday",
 ]
-# meta.json's `grades` rows, field for field and in order, as the release wrote
-# them on 2026-09-18, plus the `brand` the About page names each row's chain
-# from. Restated for the same reason as the two lists above.
+# meta.json's `grades` row fields, in order. Same seam as above.
 GRADE_FIELDS = [
     "country",
     "brand",
@@ -64,9 +59,7 @@ GRADE_FIELDS = [
 ]
 
 
-# meta.json itself, key for key and in order, as club_gas.sitedata._meta writes
-# it: the release of 2026-09-18 plus the per-feed `feeds` block the collector
-# publishes beside `countries`. Restated for the same reason as the lists above.
+# meta.json keys in order, mirroring club_gas.sitedata._meta.
 META_FIELDS = [
     "built_at_utc",
     "capture_id",
@@ -226,9 +219,7 @@ def test_a_chain_with_no_prices_has_no_grade_rows():
 
 
 def test_meta_has_the_shape_the_collector_writes(tmp_path: Path):
-    """The sample's meta.json said its notice as one string where the release
-    says a list, and carried nothing per feed. A page written against the
-    sample could pass every test here and still break on the real file."""
+    """The sample must match the release's real shape, not a simplified one."""
     build(tmp_path)
     meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
     stations = json.loads((tmp_path / "stations.json").read_text(encoding="utf-8"))

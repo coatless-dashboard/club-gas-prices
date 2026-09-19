@@ -6,11 +6,7 @@ title: "Station"
 
 ```{ojs}
 //| output: false
-// Only the pages that query the release load DuckDB; the others never
-// pay for it. This replaced a MutationObserver that watched which tab
-// pane was active, which a multi-page site has no need of.
 pageWantsDb = true
-// The price history and the change list are read from the station history.
 pageWantsHistory = true
 ```
 
@@ -32,15 +28,8 @@ viewof stationQuery = asField(
 ```
 
 ```{ojs}
-// The search box and its results share one chunk, and so one card body. Given
-// a chunk each, Quarto sized the box's body to 26px and clipped the label and
-// the input inside it.
-//
-// A link to a station lands here with the box empty, and the list used to show
-// its first 40 stations regardless -- Australia and Canada first -- between the
-// reader and the station they had just picked: two screens of them on a phone.
-// With a station open and nothing typed, the box stands alone; typing brings
-// the list back.
+// One chunk so the search box and results share a card body. When a station
+// is open and nothing is typed, the list is hidden.
 stationResults = {
   const typed = (viewof stationQuery).querySelector("input").value.trim();
   if (selectedMeta && !typed) {
@@ -107,10 +96,7 @@ stationChart = {
     return html`<div class="cgp-notice cgp-station-chart">No history yet for
       ${selectedMeta.name}.</div>`;
   }
-  // The median is the station's own chain's, and says so wherever the country
-  // has a second chain whose median it could be mistaken for. The chain goes on
-  // a line of its own, because the label sits in the chart's right margin and
-  // "FL Sam's Club median" does not fit on one.
+  // Label names the chain where the country has two; wraps to fit the margin.
   const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(latest));
   const medianLabel = `${chain ? `${chain}\n` : ""}${
     selectedMeta.region == null ? COUNTRY_NAMES[selectedMeta.country] : selectedMeta.region
@@ -139,13 +125,7 @@ stationChart = {
         stroke: palette.muted,
         strokeOpacity: 0.35
       }),
-      // The faint lines were the only unlabelled thing on the chart. One label
-      // on the highest of them at its last day says what the whole set is.
-      //
-      // Both labels live in the 80px right margin, 6px in. "nearest 5
-      // stations" ran 12px past the chart's edge and was cut off, at every
-      // width, and "United Kingdom median" further, so each wraps to the 7 ems
-      // of Plot's 10px type that the margin has left.
+      // One label for the set of faint neighbour lines, wrapping to fit.
       Plot.text(topNeighbour(neighbours), {
         x: "day",
         y: "value",
@@ -200,8 +180,7 @@ stationChart = {
       )
     ]
   });
-  // The two labels share the right margin, and where the nearest stations end
-  // close to the median the one sat on the other.
+  // Spread the two right-margin labels so they don't overlap.
   spreadEndLabels(figure);
   return html`<div class="cgp-station-chart">${figure}</div>`;
 }
@@ -254,8 +233,7 @@ stationDetail = {
       row.name
     }</a> <span class="cgp-stale">${row.km.toFixed(0)} km</span></li>`
   );
-  // The station's chain, by the rule every chart label follows: named where the
-  // country has two, and whenever it is not the primary one.
+  // Chain name, where disambiguation is needed.
   const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(latest));
   return html`<div>
     <div class="cgp-popup-title">${selectedMeta.name}${
@@ -305,10 +283,7 @@ stationChanges = {
       ${selectedMeta.name}. Its prices have held for every day collected so far.</div>`;
   }
   const rows = changes.map((change) => {
-    // Pick the currency FIRST, then derive the change from that same pair.
-    // Reading delta from the local pair while printing the USD pair made the
-    // percentage contradict the numbers beside it whenever the rate moved, and
-    // could point the arrow the wrong way.
+    // Pick currency first, then derive the delta from that same pair.
     const unit = currency === "USD" ? "USD" : change.currency;
     const from = currency === "USD" ? change.fromUsd : change.from;
     const to = currency === "USD" ? change.toUsd : change.to;

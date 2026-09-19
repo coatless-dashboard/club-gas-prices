@@ -22,7 +22,7 @@ website:
       - href: about.qmd
         text: About
     right:
-      # Two repositories: this site, and the collector whose releases it reads.
+      # Site source and data download links.
       - icon: github
         href: https://github.com/coatless-dashboard/club-gas-prices
         aria-label: "This site's source on GitHub"

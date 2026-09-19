@@ -6,9 +6,6 @@ title: "About"
 
 ```{ojs}
 //| output: false
-// Only the pages that query the release load DuckDB; the others never
-// pay for it. This replaced a MutationObserver that watched which tab
-// pane was active, which a multi-page site has no need of.
 pageWantsDb = false
 pageWantsHistory = false
 ```
@@ -50,12 +47,8 @@ day shows that day's USD value.
 ::: {.cgp-panel}
 
 ```{ojs}
-// The chain comes from each row's brand. A meta.json written before the
-// collector carried one has none at all, and a column of blank cells says
-// nothing, so the column is left out until the rows can fill it.
-//
-// Six columns do not fit a phone. The table scrolls inside its own box there,
-// which can take the keyboard's focus so the scroll is not for a mouse alone.
+// Chain column appears only when grade rows carry a brand. The table scrolls
+// horizontally on phones, with keyboard-accessible focus.
 aboutGrades = {
   const rows = meta.grades || [];
   const withChain = rows.some((row) => row.brand);

@@ -1,4 +1,4 @@
-"""Static guards on the dashboard source. They need no browser."""
+"""Static guards on the dashboard source — no browser needed."""
 
 from __future__ import annotations
 
@@ -52,13 +52,7 @@ def test_every_page_exists_and_is_in_the_navbar():
 
 
 def test_every_page_pulls_in_the_shared_cells_and_the_controls():
-    """Each page is its own OJS runtime, so the shared cells are included into
-    every one of them rather than shared between them.
-
-    About shows no price and keeps the controls anyway. The shared cells it
-    includes read Grade, Currency and Volume, and without the controls nine of
-    them fail with "grade is not defined"; the include also carries the notice
-    that says how fresh the data is."""
+    """Each page includes _shared.qmd and _controls.qmd (separate OJS runtimes)."""
     for name in PAGES:
         text = (SITE / name).read_text(encoding="utf-8")
         assert "{{< include _shared.qmd >}}" in text, name
@@ -85,14 +79,7 @@ def test_no_parenthesised_object_literal_cells():
 
 
 def test_parquet_reaches_duckdb_as_bytes_not_as_a_url():
-    """Handed a URL, DuckDB-WASM range-reads the Parquet.
-
-    GitHub Pages stores these gzipped and ranges over the compressed copy, so it
-    reports the compressed length and 416s anything past it; DuckDB read the
-    footer from the middle of the gzip stream and every querying page died on
-    "No magic bytes found at end of file". A blob: url is the stdlib's signal to
-    registerFileBuffer instead, and one plain fetch has no ranges to get wrong.
-    """
+    """Blob: URLs avoid GitHub Pages' broken gzipped range responses."""
     text = read_qmd()
     assert "URL.createObjectURL" in text
     assert "await file.arrayBuffer()" in text
@@ -102,9 +89,7 @@ def test_parquet_reaches_duckdb_as_bytes_not_as_a_url():
 
 
 def test_only_the_pages_that_query_load_duckdb():
-    """A page that does not query never downloads DuckDB-WASM. In the dashboard
-    this needed a MutationObserver on the active tab pane, because every cell of
-    every view ran at load."""
+    """Non-querying pages skip DuckDB-WASM entirely."""
     text = read_qmd()
     assert 'body.classList.contains("quarto-dark")' in text
     assert "if (!pageWantsDb) return null;" in text
@@ -123,8 +108,7 @@ def test_only_the_pages_that_query_load_duckdb():
 
 
 def test_only_the_pages_that_query_history_download_it():
-    """history.parquet is fetched whole and grows without bound, and Compare and
-    Trends downloaded it on every view without ever querying it."""
+    """Only pages that query history.parquet download it (it grows without bound)."""
     wants = {
         name: "pageWantsHistory = true" in (SITE / name).read_text(encoding="utf-8")
         for name in PAGES
@@ -153,8 +137,7 @@ def test_only_the_pages_that_query_history_download_it():
 
 
 def test_the_freshness_notice_reads_each_feed_and_falls_back_to_countries():
-    """The country block takes the newest success across a country's feeds, so
-    with two chains one could stop for days while its country read fresh."""
+    """Per-feed freshness, falling back to the country block."""
     text = read_qmd()
     sources = text.split("freshnessSources = {", 1)[1].split("\n}\n", 1)[0]
     assert "Object.values(meta.feeds || {})" in sources
@@ -244,16 +227,7 @@ def ojs_chunks() -> list[str]:
 
 
 def test_no_chart_is_built_in_a_hidden_chunk():
-    """Every `Plot.plot` call belongs to the card that shows its chart.
-
-    Two mechanisms punish a chart built in an `output: false` chunk, and
-    neither one reports an error. An OJS cell's node is inserted where the cell
-    is defined, so the hidden chunk adopts the chart and the card that returned
-    it stays empty. And Quarto's dashboard autosizing rewrites every
-    `Plot.plot` call to take the width and height of the cell the call appears
-    in, so a chart built in a hidden chunk is measured against a container that
-    is never visible and comes out zero pixels wide.
-    """
+    """Charts in hidden chunks get zero width and empty cards — no error."""
     hidden = [c for c in ojs_chunks() if c.lstrip().startswith("//| output: false")]
     assert len(hidden) >= 4  # the chunk split works, so the loop below is not vacuous
     for chunk in hidden:
@@ -263,16 +237,7 @@ def test_no_chart_is_built_in_a_hidden_chunk():
 
 
 def test_a_hidden_control_is_placed_by_a_visible_chunk():
-    """Defining a control in a hidden chunk is fine; leaving it there is not.
-
-    An OJS cell's node is inserted where the cell is defined, so a `viewof` in
-    an `output: false` chunk renders nowhere unless a visible chunk interpolates
-    it. The map defines its colour control hidden on purpose and places it in
-    the control bar. The Changes page defined its state drill-down the same way
-    and placed it nowhere: the select sat in the DOM with every option, zero by
-    zero pixels, and the per-station view behind it could not be reached. No
-    error, no empty card, nothing to notice.
-    """
+    """A viewof in a hidden chunk must be interpolated by a visible one."""
     chunks = ojs_chunks()
     hidden = [c for c in chunks if c.lstrip().startswith("//| output: false")]
     shown = "\n".join(c for c in chunks if not c.lstrip().startswith("//| output: false"))
@@ -298,13 +263,7 @@ def test_no_plot_scheme_the_pinned_plot_build_does_not_know():
 
 
 def test_the_cluster_plugin_is_loaded_without_touching_globals():
-    """Blanking `define` to force a UMD's browser branch breaks the whole page.
-
-    OJS supplies an AMD `define`, so the plugin registers as an anonymous module
-    and never patches the global L. Shadowing define/module/exports as function
-    parameters does the same job to one script; blanking the real globals took
-    every cell still loading down with it.
-    """
+    """Shadow define/module/exports locally; blanking globals breaks OJS."""
     text = read_qmd()
     assert 'new Function("define", "module", "exports", source)' in text
     assert "window.define = undefined" not in text
@@ -349,15 +308,13 @@ def test_the_legend_says_what_the_ramp_means():
 def test_a_station_carries_its_country_flag():
     text = read_qmd()
     assert "function countryFlag(code)" in text
-    # 0x1F1E6 is regional indicator A; the flag is built from the country code
-    # rather than shipped as an image per country.
+    # Flags built from regional indicator symbols, not shipped images.
     assert "0x1f1e6" in text
     assert text.count('class="cgp-flag"') >= 2
 
 
 def test_the_trend_view_control_is_built_once():
-    """A control that depends on the breakdown or the currency resets on every
-    change of either, throwing away the reader's choice."""
+    """The view control must not depend on reactive values that would reset it."""
     text = read_qmd()
     block = text.split("viewof trendMode = radioControl(", 1)[1].split(")\n```", 1)[0]
     for reactive in ("trendCountry", "currency", "grade", "volume"):
@@ -366,8 +323,7 @@ def test_the_trend_view_control_is_built_once():
 
 
 def test_a_shared_price_axis_needs_a_single_currency():
-    """The incommensurability is between countries, not inside one: a country's
-    regions all price in the same currency, so they keep a real price axis."""
+    """Mixed currencies across countries force a change view, not a price axis."""
     text = read_qmd()
     assert 'mixedCurrency = currency === "Local" && trendCountry === "All countries"' in text
     assert (
@@ -380,8 +336,7 @@ def test_a_shared_price_axis_needs_a_single_currency():
 
 
 def test_the_change_view_anchors_every_country_on_one_day():
-    """Anchoring each line on its own first day and printing one date on the
-    axis is the claim this view exists to avoid."""
+    """All lines share one base day — the view's whole point."""
     text = read_qmd()
     assert "function commonBaseDay(" in text
     assert "Math.max(...firsts)" in text
@@ -389,8 +344,7 @@ def test_the_change_view_anchors_every_country_on_one_day():
 
 
 def test_compare_draws_a_chart_in_every_scope():
-    """Local currency used to fall back to a table, so the chart disappeared
-    whenever the reader asked for local prices."""
+    """Every scope (country/region x USD/local) gets a chart, not a table."""
     text = read_qmd()
     compare = text.split("compareView = {", 1)[1]
     assert 'if (currency === "Local") return compareTableEl();' not in compare
@@ -404,14 +358,12 @@ def test_compare_draws_a_chart_in_every_scope():
 
 
 def test_compare_keeps_the_table_helper_as_a_fallback():
-    """compareTableEl is no longer reached, but it is the right answer if the
-    local chart is ever cut, and it costs nothing to keep."""
+    """compareTableEl is kept as a fallback even though it's no longer reached."""
     assert "function compareTableEl()" in read_qmd()
 
 
 def test_series_are_capped_to_the_palette():
-    """tableau10 has ten colors; asked for more, Plot cycles them silently and
-    the legend then claims two regions are the same one."""
+    """Cap at 10 series — beyond that, Plot silently reuses colors."""
     text = read_qmd()
     assert "PALETTE_SERIES_CAP = 10" in text
     assert "drawn = asked.slice(0, PALETTE_SERIES_CAP)" in text
@@ -420,8 +372,7 @@ def test_series_are_capped_to_the_palette():
 
 
 def test_line_ends_are_labelled_per_series():
-    """Filtering on the global last day drops the label of any series whose feed
-    stalled -- the one most worth naming."""
+    """selectLast per series so stalled feeds keep their label."""
     text = read_qmd()
     assert "Plot.selectLast(" in text
     # `z` must be explicit: with `stroke` a function Plot infers no series and
@@ -434,12 +385,7 @@ def test_line_ends_are_labelled_per_series():
 
 
 def test_every_end_label_is_spread_once_its_chart_is_drawn():
-    """Plot 0.6.11 sets each end label at its own line's last point and never
-    moves one out of another's way, so lines ending at nearly the same value
-    printed their names over each other: Japan over Taiwan on Trends, and the
-    Station chart's two reference-line labels. Every one of them carries the
-    description the shared pass and the smoke test find it by, and every chart
-    that draws one runs the pass once it is drawn."""
+    """End labels are marked with END_LABELS and spread post-render."""
     sys.path.insert(0, str(ROOT / "tests" / "smoke"))
     from smoke_site import END_LABELS
 
@@ -466,13 +412,7 @@ def test_dots_stand_down_once_they_stop_marking_anything():
 
 
 def test_the_sample_uses_keys_the_pipeline_would_emit():
-    """A sample key the collector could never produce ends up in a URL somebody
-    shares -- and the site then renders against a shape it will never receive.
-
-    This reads the fixture's own station list rather than site/data/, which is
-    gitignored: the previous version guarded on `if data.exists()` and so never
-    executed in CI, which is how the pre-brand key format survived a rename.
-    """
+    """Station keys must match the <COUNTRY>-<BRAND>-<id> format the pipeline emits."""
     import re as _re
     import sys as _sys
 
@@ -495,8 +435,7 @@ def test_the_sample_uses_keys_the_pipeline_would_emit():
 
 
 def test_object_constants_use_the_block_form():
-    """`NAME = {…}` is a block in OJS, not an object literal. Getting this wrong
-    does not fail that cell -- it takes down every cell in the chunk."""
+    """`NAME = {…}` is a block in OJS, not an object literal."""
     text = read_qmd()
     for name in ("COUNTRY_NAMES", "COUNTRY_COLORS", "GRADE_LABELS", "WAREHOUSE_PAGE"):
         block = text.split(f"{name} = ", 1)[1][:40]
@@ -578,13 +517,7 @@ def test_the_notice_and_a_route_for_rights_holders_are_in_the_footer():
 
 
 def test_the_contact_address_is_never_written_whole():
-    """The footer offers chains an address to write to and puts it together in
-    the reader's browser. Written whole anywhere a crawler reads -- the site's
-    source, the README, a rendered page -- it would be harvested along with
-    every other address on the web, so the README spells it out in words.
-
-    CI runs this before it renders, so the rendered pages are read here only
-    where a local render left them; the smoke test reads CI's own."""
+    """The email address is assembled client-side; no file may contain it whole."""
     sys.path.insert(0, str(ROOT / "tests" / "smoke"))
     from smoke_site import ojs_sources
 
@@ -608,10 +541,7 @@ def test_the_contact_address_is_never_written_whole():
 
 
 def test_a_daily_series_gets_daily_ticks():
-    """Given a count, Plot split a short daily series into hours: "12 AM Sep 17,
-    12 PM, 12 AM Sep 18" on the release's second day, and the wider the page,
-    the more of them. A history shorter than the count gets its days as the
-    ticks themselves."""
+    """Ticks land on whole days, not sub-day intervals."""
     text = read_qmd()
     body = text.split("function dayTicks(rows, room = chartWidth) {", 1)[1].split("\n}\n", 1)[0]
     assert "new Date(times[0] + i * 864e5)" in body
@@ -629,9 +559,7 @@ def test_a_daily_series_gets_daily_ticks():
 
 
 def test_the_change_tip_looks_the_currency_up_by_country():
-    """currencyOf is keyed on the country. The change view keys its series on the
-    country and the chain, and looked the currency up by that, so every tip in
-    local currency quoted its prices in "local"."""
+    """currencyOf is keyed on country, not on the full series key."""
     trends = (SITE / "trends.qmd").read_text(encoding="utf-8")
     change = trends.split("function allCountriesChange() {", 1)[1].split("\n  function ", 1)[0]
     assert "currencyOf.get(row.country)" in change
@@ -639,10 +567,7 @@ def test_the_change_tip_looks_the_currency_up_by_country():
 
 
 def test_the_about_page_describes_the_schedule_the_collector_runs():
-    """The collector's cron is `17 */6 * * *`: four captures a day at fixed UTC
-    times, every station read whether or not it is open, every reading kept. The
-    page said every four hours while a station is open, and the collector has
-    never worked that way."""
+    """The About page must say four times a day, open or not."""
     # The prose wraps, so it is read as one line.
     about = " ".join((SITE / "about.qmd").read_text(encoding="utf-8").split())
     assert "four times a day" in about
@@ -652,9 +577,7 @@ def test_the_about_page_describes_the_schedule_the_collector_runs():
 
 
 def test_the_grade_table_leaves_out_a_chain_column_it_cannot_fill():
-    """A meta.json written before the collector carried `brand` drew a Chain
-    column of blank cells on every row. The sample has a brand on every row, so
-    a smoke run against it cannot see this."""
+    """No Chain column when grade rows lack a brand."""
     about = (SITE / "about.qmd").read_text(encoding="utf-8")
     table = about.split("aboutGrades = {", 1)[1].split("\n}\n", 1)[0]
     assert "const withChain = rows.some((row) => row.brand);" in table
@@ -663,13 +586,7 @@ def test_the_grade_table_leaves_out_a_chain_column_it_cannot_fill():
 
 
 def test_summary_queries_carry_brand_so_two_chains_cannot_pool():
-    """summary_daily is keyed on brand as well as country.
-
-    Once a second chain publishes in a country there are two rows per day, so a
-    query that neither selects nor groups by brand silently draws both as one
-    series and sums their station counts -- the pooled figure this site does not
-    make. Nothing else on the page reveals it, which is why it is pinned here.
-    """
+    """Queries must select/group by brand to avoid silently pooling two chains."""
     shared = (ROOT / "site" / "_shared.qmd").read_text(encoding="utf-8")
 
     country_queries = shared.count("WHERE level = 'country'")
@@ -687,10 +604,7 @@ def test_summary_queries_carry_brand_so_two_chains_cannot_pool():
 
 
 def test_the_latest_day_note_adds_up_every_series():
-    """The note under a seven-country chart said 596 stations, the United States
-    alone, because the count took the largest series rather than all of them.
-    Within a series a second row is the same stations twice, so that stays a
-    maximum; across series the chart stands on every one of them."""
+    """The station count sums every series, not just the largest one."""
     shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
     body = shared.split("function latestStationCount(", 1)[1].split("\n}\n", 1)[0]
     assert "Math.max(0, ...bySeries.values())" not in body
@@ -705,9 +619,7 @@ def region_queries(name: str) -> list[str]:
 
 
 def test_region_queries_carry_brand_so_two_chains_cannot_pool():
-    """A state both chains serve has a row a day for each. Without brand the
-    rows cannot be told apart: Compare kept whichever came first, and Trends
-    drew one line alternating between two companies' prices."""
+    """Region queries must carry brand to keep two chains apart."""
     for name in ("compare.qmd", "trends.qmd"):
         queries = region_queries(name)
         assert queries, name
@@ -717,8 +629,7 @@ def test_region_queries_carry_brand_so_two_chains_cannot_pool():
 
 
 def test_compare_keys_every_row_on_its_chain():
-    """Keyed on the country, the newer of two chains silently stood in for both,
-    and in local currency one chain's median was divided by the other's anchor."""
+    """Each row is keyed on its chain, not just its country."""
     shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
     compare = (SITE / "compare.qmd").read_text(encoding="utf-8")
     assert "newestByKey(compareRows, seriesOf)" in shared
@@ -736,9 +647,7 @@ def test_compare_keys_every_row_on_its_chain():
 
 
 def test_every_trends_line_and_band_is_keyed_on_the_series():
-    """Without `z`, Plot joins every row of a mark into one path. Two chains in
-    a region became one sawtooth line, and two chains' bands in the separate
-    charts became one polygon that ran to the last day and doubled back."""
+    """Every line and band needs `z: "series"` to prevent chain-merging."""
     trends = (SITE / "trends.qmd").read_text(encoding="utf-8")
     marks = re.split(r"Plot\.(?:line|areaY)\(", trends)[1:]
     assert len(marks) >= 10  # the split works, so the loop below is not vacuous

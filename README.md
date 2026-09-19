@@ -2,8 +2,9 @@
 
 The Quarto site behind
 <https://dashboard.thecoatlessprofessor.com/club-gas-prices/>: posted fuel prices at
-warehouse-club gas stations, currently every Costco station in the United States,
-Canada, Mexico, the United Kingdom, Australia, Japan and Taiwan.
+warehouse-club gas stations: every Costco station in the United States, Canada,
+Mexico, the United Kingdom, Australia, Japan and Taiwan, and every Sam's Club fuel
+center in the United States.
 
 This repository holds the site only. The prices are collected and published by
 [coatless-data/club-gas-prices](https://github.com/coatless-data/club-gas-prices),
