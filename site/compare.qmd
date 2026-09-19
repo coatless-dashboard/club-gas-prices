@@ -29,7 +29,7 @@ compareRegionRows = db && compareCountry !== "All countries"
              p75_usd_per_litre
       FROM summary_daily
       WHERE level = 'region' AND country = ${sqlText(compareCountry)}
-        AND grade = ${sqlText(grade)}
+        AND grade = ${sqlText(grade)}${chainClause}
       ORDER BY region, brand, capture_date
     `)
   : []

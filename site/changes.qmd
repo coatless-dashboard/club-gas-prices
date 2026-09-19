@@ -33,7 +33,7 @@ viewof changesPlace = asField(
 //| output: false
 changesStates = {
   const seen = new Set();
-  for (const station of stationsAll) {
+  for (const station of filteredStations) {
     if (station.country === "US" && station.region) seen.add(station.region);
   }
   return [...seen].sort();
@@ -45,7 +45,7 @@ changesByState = db
       WITH win AS (
         SELECT station_key, brand, capture_date, changed
         FROM history
-        WHERE grade = ${sqlText(grade)}
+        WHERE grade = ${sqlText(grade)}${chainClause}
           AND capture_date > (SELECT max(capture_date) FROM history) - ${changesWindowDays}
       ),
       scoped AS (
@@ -69,7 +69,7 @@ changesByState = db
 // this prunes row groups rather than scanning.
 changesStationKeys = {
   if (changesPlace === "All US states") return [];
-  return stationsAll
+  return filteredStations
     .filter((s) => s.country === "US" && s.region === changesPlace)
     .map((s) => s.station_key);
 }
@@ -160,8 +160,13 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
   const {cells, binDomain} = changesBinned(rows, keyName);
   if (!cells.length) return null;
   const brands = [...new Set(cells.map((c) => c.brand))].sort();
-  // Keep at least 140px of plot area, the way compare's dotPlot does.
-  const left = Math.min(marginLeft, Math.max(56, chartWidth - 24 - 140));
+  // Size the gutter to the longest label (~5.2px/char), capped so the plot
+  // keeps at least 140px of area.
+  const longest = Math.max(0, ...cells.map((c) => (labelOf(c.key) || c.key).length));
+  const left = Math.min(
+    Math.max(marginLeft, Math.ceil(16 + 5.2 * longest)),
+    Math.max(56, chartWidth - 24 - 140)
+  );
 
   return brands.map((brand) => {
     const mine = cells.filter((c) => c.brand === brand);
@@ -229,7 +234,7 @@ changesFigure = {
       drilled ? ` for ${changesPlace}` : ""
     }. This fills in as captures accumulate.</div>`;
   }
-  const nameOf = new Map(stationsAll.map((s) => [s.station_key, s.name]));
+  const nameOf = new Map(filteredStations.map((s) => [s.station_key, s.name]));
   const charts = changesChart(rows, drilled ? "station_key" : "region", {
     rowLabel: drilled ? "station" : "state",
     marginLeft: drilled ? 150 : 56,

@@ -18,7 +18,7 @@ pageWantsHistory = true
 ```{ojs}
 //| output: false
 viewof stationQuery = asField(
-  Inputs.search(stationsAll, {
+  Inputs.search(filteredStations, {
     placeholder: "Name, local name, city or region…",
     columns: ["name", "name_local", "city", "region"],
     label: "Search"
@@ -97,7 +97,7 @@ stationChart = {
       ${selectedMeta.name}.</div>`;
   }
   // Label names the chain where the country has two; wraps to fit the margin.
-  const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(latest));
+  const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(filteredLatest));
   const medianLabel = `${chain ? `${chain}\n` : ""}${
     selectedMeta.region == null ? COUNTRY_NAMES[selectedMeta.country] : selectedMeta.region
   } median`;
@@ -234,7 +234,7 @@ stationDetail = {
     }</a> <span class="cgp-stale">${row.km.toFixed(0)} km</span></li>`
   );
   // Chain name, where disambiguation is needed.
-  const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(latest));
+  const chain = chainTag(selectedMeta.country, selectedMeta.brand, chainsByCountry(filteredLatest));
   return html`<div>
     <div class="cgp-popup-title">${selectedMeta.name}${
       selectedMeta.name_local

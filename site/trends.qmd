@@ -56,7 +56,7 @@ trendRegionRows =
         FROM summary_daily
         WHERE level = 'region'
           AND country = ${sqlText(trendCountry)}
-          AND grade = ${sqlText(grade)}
+          AND grade = ${sqlText(grade)}${chainClause}
         ORDER BY region, brand, capture_date
       `)
     : []

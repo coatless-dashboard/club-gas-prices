@@ -28,6 +28,16 @@ viewof volume = radioControl(
 ```
 
 ```{ojs}
+// Only shown when the data has more than one chain.
+viewof chain = {
+  const entries = [["Both", "all"], ...allBrands.map((b) => [BRAND_NAMES[b] || b, b])];
+  const input = radioControl("chain", entries, "all", "Chain");
+  if (allBrands.length < 2) input.style.display = "none";
+  return input;
+}
+```
+
+```{ojs}
 freshnessNotice = {
   const now = nowTick;
   const items = [];

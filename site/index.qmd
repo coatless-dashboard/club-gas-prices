@@ -68,7 +68,7 @@ absoluteGuard = {
 absoluteDomain = {
   if (effectiveColorMode !== "absolute") return null;
   const values = [];
-  for (const station of latest) {
+  for (const station of filteredLatest) {
     const value = stationPrice(station, grade, "USD", volume);
     if (value != null) values.push(value);
   }
@@ -81,7 +81,7 @@ absoluteDomain = {
 rankPercentiles = {
   if (effectiveColorMode !== "rank") return new Map();
   const byCountry = new Map();
-  for (const station of latest) {
+  for (const station of filteredLatest) {
     const value = stationPrice(station, grade, currency, volume);
     if (value == null) continue;
     if (!byCountry.has(station.country)) byCountry.set(station.country, []);
@@ -113,7 +113,7 @@ markerLayerUpdate = {
   el._pal = pal;
   layer.clearLayers();
   let count = 0;
-  for (const station of latest) {
+  for (const station of filteredLatest) {
     if (station.lat == null || station.lon == null) continue;
     if (!gradeEntry(station, grade)) continue;
     const value = stationPrice(station, grade, currency, volume);

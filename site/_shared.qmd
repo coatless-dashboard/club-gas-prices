@@ -39,9 +39,18 @@ GRADE_LABELS = {
 
 meta = FileAttachment("data/meta.json").json()
 
-latest = FileAttachment("data/latest.json").json()
+latestAll = FileAttachment("data/latest.json").json()
 
 stationsAll = FileAttachment("data/stations.json").json()
+
+// All brands in the data; the Chain control appears only when there are two.
+allBrands = [...new Set(latestAll.map((s) => s.brand).filter(Boolean))].sort(chainOrder)
+
+// Filtered views driven by the Chain control.
+filteredLatest = chain === "all" ? latestAll : latestAll.filter((s) => s.brand === chain)
+filteredStations = chain === "all" ? stationsAll : stationsAll.filter((s) => s.brand === chain)
+
+chainClause = chain === "all" ? "" : ` AND brand = ${sqlText(chain)}`
 ```
 
 ```{ojs}
@@ -145,7 +154,7 @@ nowTick = Generators.observe((notify) => {
 // was looking at.
 CONTROL_PARAMS = {
   // Radios listed here round-trip through the query string.
-  return {grade: "grade", currency: "cur", volume: "vol", colormode: "color", trendmode: "view"};
+  return {grade: "grade", currency: "cur", volume: "vol", chain: "chain", colormode: "color", trendmode: "view"};
 }
 
 function controlFromUrl(name, fallback, allowed) {
@@ -386,7 +395,7 @@ priceDigits = volume === "gal" ? 3 : 4
 
 currencyOf = {
   const map = new Map();
-  for (const station of latest) {
+  for (const station of filteredLatest) {
     const entry =
       gradeEntry(station, "regular") ||
       gradeEntry(station, "premium") ||
@@ -407,7 +416,7 @@ staleAfterHours = {
 // with no stations in the data are omitted.
 freshnessSources = {
   const feeds = Object.values(meta.feeds || {});
-  const shown = new Set(stationsAll.map((station) => station.brand).filter(Boolean));
+  const shown = new Set(filteredStations.map((station) => station.brand).filter(Boolean));
   const kept = feeds.filter((feed) => shown.has(feed.brand));
   const chains = chainsByCountry(kept);
   const sources = [];
@@ -1022,7 +1031,7 @@ compareRows = db
              p25_usd_per_litre,
              p75_usd_per_litre
       FROM summary_daily
-      WHERE level = 'country' AND grade = ${sqlText(grade)}
+      WHERE level = 'country' AND grade = ${sqlText(grade)}${chainClause}
       ORDER BY country, brand, capture_date
     `)
   : []
@@ -1117,7 +1126,7 @@ trendCountryRows = db
              p25_usd_per_litre,
              p75_usd_per_litre
       FROM summary_daily
-      WHERE level = 'country' AND grade = ${sqlText(grade)}
+      WHERE level = 'country' AND grade = ${sqlText(grade)}${chainClause}
       ORDER BY country, brand, capture_date
     `)
   : []
@@ -1178,14 +1187,14 @@ selectedMeta = selectedStation
   : null
 
 selectedLatest = selectedStation
-  ? latest.find((row) => row.station_key === selectedStation) || null
+  ? filteredLatest.find((row) => row.station_key === selectedStation) || null
   : null
 
 nearestStations = {
   // Neighbours are useful even for stations that stopped posting.
   const origin = selectedLatest || selectedMeta;
   if (!origin || origin.lat == null) return [];
-  return latest
+  return filteredLatest
     .filter(
       (row) =>
         row.station_key !== origin.station_key &&
