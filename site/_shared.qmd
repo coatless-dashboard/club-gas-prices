@@ -444,7 +444,7 @@ freshnessSources = {
 countryBounds = {
   const box = new Map();
   const all = [Infinity, Infinity, -Infinity, -Infinity];
-  for (const station of latest) {
+  for (const station of latestAll) {
     if (station.lat == null || station.lon == null) continue;
     const b = box.get(station.country) || [Infinity, Infinity, -Infinity, -Infinity];
     b[0] = Math.min(b[0], station.lat);
