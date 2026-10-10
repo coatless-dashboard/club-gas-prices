@@ -17,6 +17,12 @@ $navbar-fg: #e6e9ec !default;
   --cgp-ramp-3: #f2cc60;
   --cgp-ramp-4: #f08a60;
   --cgp-ramp-5: #e05545;
+  // An arm grows lighter toward its end here, where the light theme's darkens.
+  --cgp-fall-2: #6cb6d9;
+  --cgp-fall-1: #3b7696;
+  --cgp-flat: #343a40;
+  --cgp-rise-1: #9a4438;
+  --cgp-rise-2: #e05545;
   --cgp-missing: #8b9196;
   --cgp-marker-stroke: #14171a;
   --cgp-grid: rgba(230, 233, 236, 0.18);

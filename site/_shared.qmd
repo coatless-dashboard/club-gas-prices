@@ -88,6 +88,14 @@ palette = {
       read("--cgp-ramp-4", "#e76f51"),
       read("--cgp-ramp-5", "#b3261e")
     ],
+    // Falls to rises about a neutral, for which way a price moved.
+    diverging: [
+      read("--cgp-fall-2", "#2a6f97"),
+      read("--cgp-fall-1", "#61a5c2"),
+      read("--cgp-flat", "#dfe3e6"),
+      read("--cgp-rise-1", "#e76f51"),
+      read("--cgp-rise-2", "#b3261e")
+    ],
     missing: read("--cgp-missing", "#9aa0a6"),
     stroke: read("--cgp-marker-stroke", "#ffffff"),
     muted: read("--cgp-muted", "#5b6770"),
@@ -154,7 +162,15 @@ nowTick = Generators.observe((notify) => {
 // was looking at.
 CONTROL_PARAMS = {
   // Radios listed here round-trip through the query string.
-  return {grade: "grade", currency: "cur", volume: "vol", chain: "chain", colormode: "color", trendmode: "view"};
+  return {
+    grade: "grade",
+    currency: "cur",
+    volume: "vol",
+    chain: "chain",
+    colormode: "color",
+    trendmode: "view",
+    changemode: "show"
+  };
 }
 
 function controlFromUrl(name, fallback, allowed) {

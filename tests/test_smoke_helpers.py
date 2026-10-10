@@ -37,12 +37,15 @@ from smoke_site import (  # noqa: E402
     grade_table_problems,
     is_site_console_error,
     launch_browser,
+    longest_name_state,
     misaligned_ticks,
     ojs_sources,
     overlapping_labels,
     parse_color,
     path_points,
+    stations_by_state,
     stations_per_chain,
+    telling_colors,
     time_of_day_charts,
     tip_units,
     unexplained_colors,
@@ -242,6 +245,26 @@ def test_the_smallest_state_is_the_one_with_fewest_stations_pricing_the_grade():
     assert fewest_stations_state(florida_only, "regular") == "FL"
 
 
+def test_stations_are_counted_by_state_for_the_grade_they_price():
+    # Florida has one of each chain; Great Britain has no states.
+    assert stations_by_state(TWO_CHAINS, "regular") == {"FL": 2, "TX": 1}
+    assert stations_by_state(TWO_CHAINS, "diesel") == {}
+
+
+def test_the_widest_state_is_the_one_with_the_longest_station_name():
+    # Its drill-down has the widest margin for a phone to find room for.
+    named = [
+        dict(TWO_CHAINS[0], name="Bradenton"),
+        dict(TWO_CHAINS[1], name="Orlando Sam's Club"),
+        dict(TWO_CHAINS[2], name="Dallas, Timber Creek Crossing Sam's Club"),
+        dict(TWO_CHAINS[3], name="A station in no state, however long its name is"),
+    ]
+    assert longest_name_state(named, "regular") == "TX"
+    # A station that does not price the grade draws no row, so is not measured.
+    assert longest_name_state(named, "diesel") is None
+    assert longest_name_state(named[:2], "regular") == "FL"
+
+
 def test_a_date_axis_ticked_between_days_is_caught():
     # The Trends chart on the release's second day, as the audit read it.
     hourly = {"chart": "Median", "labels": ["12 AM Sep 17", "12 PM", "12 AM Sep 18"]}
@@ -416,6 +439,15 @@ def test_a_key_must_carry_every_color_a_cell_is_drawn_in():
     # A cell color the key does not show, and no key at all.
     assert unexplained_colors(["#2a6f97", "#b3261e"], swatches) == ["#b3261e"]
     assert unexplained_colors(["#2a6f97"], []) == ["#2a6f97"]
+
+
+def test_a_heatmap_of_nothing_but_the_missing_gray_tells_nothing():
+    gray = "rgb(154, 160, 166)"
+    # One state's stations as the drill-down drew them: 1,650 cells, one color.
+    assert telling_colors(["#9aa0a6"], gray) == []
+    assert telling_colors(["#9aa0a6", "#2a6f97", "#B3261E"], gray) == ["#2a6f97", "#B3261E"]
+    # No key to say which color is the missing one: nothing can be called told.
+    assert telling_colors(["#2a6f97"], None) == []
 
 
 class FakeBrowser:

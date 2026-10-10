@@ -1,5 +1,38 @@
 ::: {.cgp-controlbar}
 
+::: {.cgp-controlbar-fold}
+
+```{ojs}
+// A phone folds the four groups below behind this one line, which says what
+// they are set to and opens them on a tap. A wider screen never shows it.
+controlSummary = {
+  const parts = [GRADE_LABELS[grade], currency === "USD" ? "USD" : "Local", volumeLabel];
+  // The Chain control only shows where the data has two.
+  if (allBrands.length > 1) {
+    parts.push(chain === "all" ? "Both chains" : BRAND_NAMES[chain] || chain);
+  }
+  // The cell runs again on every choice, so the button it replaces says
+  // whether the controls are open.
+  const bar = document.querySelector(".cgp-controlbar");
+  const open = Boolean(bar && bar.classList.contains("is-open"));
+  const button = html`<button type="button" class="cgp-controlbar-toggle"
+    aria-controls="cgp-controls" aria-expanded=${String(open)}>
+    <span class="cgp-controlbar-summary">${parts.join(" · ")}</span>
+    <span class="cgp-controlbar-cue">${open ? "Done" : "Change"}</span>
+  </button>`;
+  button.addEventListener("click", () => {
+    const now = button.closest(".cgp-controlbar").classList.toggle("is-open");
+    button.setAttribute("aria-expanded", String(now));
+    button.querySelector(".cgp-controlbar-cue").textContent = now ? "Done" : "Change";
+  });
+  return button;
+}
+```
+
+:::
+
+::: {#cgp-controls .cgp-controlbar-panel}
+
 ```{ojs}
 viewof grade = radioControl(
   "grade",
@@ -37,6 +70,10 @@ viewof chain = {
 }
 ```
 
+:::
+
+::: {.cgp-freshness}
+
 ```{ojs}
 freshnessNotice = {
   const now = nowTick;
@@ -68,5 +105,7 @@ freshnessNotice = {
   return html`<div class="cgp-alert">${items.map((text) => html`<div>${text}</div>`)}</div>`;
 }
 ```
+
+:::
 
 :::

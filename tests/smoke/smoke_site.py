@@ -161,14 +161,17 @@ CLUSTER_COLORS_JS = """() => [...document.querySelectorAll(".cgp-cluster span")]
     return {count: span.textContent.trim(), ink: style.color, fill: style.backgroundColor};
   })"""
 
-# The Changes key: its words and swatches, and every color a cell is drawn in.
+# The Changes key: its words and swatches, the swatch it gives a cell with
+# nothing to show, and every color a cell is drawn in.
 CHANGES_KEY_JS = """() => {
   const key = document.querySelector(".cgp-changes-key");
+  const missing = key && key.querySelector(".cgp-legend-missing .cgp-swatch");
   return {
     text: key ? key.textContent.replace(/\\s+/g, " ").trim() : "",
     swatches: key
       ? [...key.querySelectorAll(".cgp-swatch")].map((s) => getComputedStyle(s).backgroundColor)
       : [],
+    missing: missing ? getComputedStyle(missing).backgroundColor : null,
     cells: [...new Set([...document.querySelectorAll('svg g[aria-label="cell"] rect')]
       .map((rect) => rect.getAttribute("fill")))]
   };
@@ -187,6 +190,110 @@ CHANGES_CELLS_JS = """() => [...document.querySelectorAll("svg")]
   .map((chart) => ({chart: chart.chart, shortest: Math.min(...chart.heights)}))"""
 # A heatmap row is 16px apart on a desktop; this leaves room for the inset.
 MIN_CELL_PX = 8
+
+# The colors each state's row is drawn in, across every chain's heatmap: a row
+# is the cells level with its label.
+CHANGES_ROW_COLORS_JS = """() => {
+  const rows = {};
+  for (const svg of document.querySelectorAll("svg")) {
+    if (!(svg.getAttribute("aria-label") || "").includes("price moved, by state")) continue;
+    const cells = [...svg.querySelectorAll('g[aria-label="cell"] rect')].map((rect) => {
+      const r = rect.getBoundingClientRect();
+      return {top: r.top, bottom: r.bottom, fill: rect.getAttribute("fill")};
+    });
+    for (const text of svg.querySelectorAll('g[aria-label="y-axis tick label"] text')) {
+      const r = text.getBoundingClientRect();
+      const level = (r.top + r.bottom) / 2;
+      const row = (rows[text.textContent] = rows[text.textContent] || []);
+      for (const cell of cells) {
+        if (cell.top <= level && level <= cell.bottom && !row.includes(cell.fill)) {
+          row.push(cell.fill);
+        }
+      }
+    }
+  }
+  return rows;
+}"""
+
+# Each Changes heatmap's date labels, as the boxes they are drawn in. Plot
+# labels every value of a band scale, so a phone drew 24 slanted dates across
+# 258px, each over the next.
+CHANGES_DATES_JS = """() => [...document.querySelectorAll("svg")]
+  .filter((svg) => (svg.getAttribute("aria-label") || "").includes("price moved, by"))
+  .map((svg) => ({
+    chart: svg.getAttribute("aria-label"),
+    labels: [...svg.querySelectorAll('g[aria-label="x-axis tick label"] text')].map((text) => {
+      const r = text.getBoundingClientRect();
+      return {text: text.textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom};
+    })
+  }))"""
+
+# The middle of a cell near the middle of the first Changes heatmap, brought to
+# where a pointer can reach it. The page scrolls smoothly unless told not to,
+# and a cell read mid-scroll is somewhere else by the time it is pointed at.
+CHANGES_SPOT_JS = """() => {
+  const svg = [...document.querySelectorAll("svg")]
+    .find((s) => (s.getAttribute("aria-label") || "").includes("price moved, by"));
+  const cells = svg ? [...svg.querySelectorAll('g[aria-label="cell"] rect')] : [];
+  if (!cells.length) return null;
+  const cell = cells[Math.floor(cells.length / 2)];
+  cell.scrollIntoView({block: "center", behavior: "instant"});
+  const r = cell.getBoundingClientRect();
+  return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+}"""
+
+CHANGES_TIP_JS = """() => {
+  const svg = [...document.querySelectorAll("svg")]
+    .find((s) => (s.getAttribute("aria-label") || "").includes("price moved, by"));
+  const tip = svg && svg.querySelector("g[aria-label='tip']");
+  return tip ? tip.textContent.trim() : "";
+}"""
+
+# The control bar: its height, how much of that is a stale-data alert, what its
+# one-line summary says where it has one on show, and whether the grade options
+# are on show.
+CONTROL_BAR_JS = """() => {
+  const bar = document.querySelector(".cgp-controlbar");
+  if (!bar) return null;
+  const toggle = bar.querySelector(".cgp-controlbar-toggle");
+  const tall = (el) => (el ? el.getBoundingClientRect().height : 0);
+  return {
+    height: tall(bar),
+    alert: tall(bar.querySelector(".cgp-alert")),
+    summary: tall(toggle) ? toggle.textContent.replace(/\\s+/g, " ").trim() : null,
+    expanded: toggle ? toggle.getAttribute("aria-expanded") : null,
+    options: tall(bar.querySelector('[data-control="grade"]'))
+  };
+}"""
+# One line of pills and the bar's own padding; the full bar was 114px.
+PHONE_BAR_PX = 64
+
+# How far the control bar sits below whatever of the navbar is still on screen.
+# Quarto slides the navbar away on the way down a page, and the bar held its
+# place under where the navbar had been, with the page showing through above.
+CONTROL_BAR_GAP_JS = """() => {
+  const header = document.querySelector("#quarto-header");
+  const bar = document.querySelector(".cgp-controlbar");
+  if (!header || !bar) return null;
+  return bar.getBoundingClientRect().top - Math.max(0, header.getBoundingClientRect().bottom);
+}"""
+
+# How much of the Station page's search card its box takes: beside its caption
+# and its count, a phone left it 150px, less than its own placeholder.
+STATION_SEARCH_JS = """() => {
+  const card = document.querySelector(".cgp-search");
+  const box = card && card.querySelector("input[type=search]");
+  return box ? box.getBoundingClientRect().width / card.getBoundingClientRect().width : null;
+}"""
+
+# The rows of the Station page's price-change table that run onto a second
+# line. A phone had no room for a price and its unit, so all thirty did.
+WRAPPED_CHANGE_ROWS_JS = """() => [...document.querySelectorAll("table.cgp-table")]
+  .filter((table) => table.tHead && table.tHead.textContent.includes("First seen"))
+  .flatMap((table) => [...table.tBodies[0].rows])
+  .filter((row) => row.getBoundingClientRect().height
+    > 2 * (parseFloat(getComputedStyle(row.cells[0]).lineHeight) || 20))
+  .length"""
 
 # How many lines the coverage strip under the Trends chart draws.
 STRIP_LINES_JS = """() => {
@@ -429,20 +536,42 @@ def stations_per_chain(latest: list[dict], per: int = 2) -> list[str]:
     return keys
 
 
-def fewest_stations_state(latest: list[dict], grade: str) -> str | None:
-    """The US state with the fewest stations pricing `grade`, whose Changes
-    drill-down has the fewest rows to spread its height over; the first by name
-    on a tie. A station without the grade draws no row there, so it is not
-    counted, and a state of only those is never picked."""
+def stations_by_state(latest: list[dict], grade: str) -> dict[str, int]:
+    """How many stations price `grade` in each US state. A station without the
+    grade draws no row on Changes, so it is not counted."""
     counts: dict[str, int] = {}
     for station in latest:
         if not (station.get("grades") or {}).get(grade):
             continue
         if station.get("country") == "US" and station.get("region"):
             counts[station["region"]] = counts.get(station["region"], 0) + 1
+    return counts
+
+
+def fewest_stations_state(latest: list[dict], grade: str) -> str | None:
+    """The US state with the fewest stations pricing `grade`, whose Changes
+    drill-down has the fewest rows to spread its height over; the first by name
+    on a tie. A state of only stations without the grade is never picked."""
+    counts = stations_by_state(latest, grade)
     if not counts:
         return None
     return min(counts, key=lambda region: (counts[region], region))
+
+
+def longest_name_state(latest: list[dict], grade: str) -> str | None:
+    """The US state of the station with the longest name among those pricing
+    `grade`, whose Changes drill-down has the widest margin of names to fit on
+    a phone; the first by name on a tie."""
+    lengths: dict[str, int] = {}
+    for station in latest:
+        if not (station.get("grades") or {}).get(grade):
+            continue
+        if station.get("country") == "US" and station.get("region"):
+            length = len(station.get("name") or "")
+            lengths[station["region"]] = max(lengths.get(station["region"], 0), length)
+    if not lengths:
+        return None
+    return min(lengths, key=lambda region: (-lengths[region], region))
 
 
 def fetches_history(urls: list[str]) -> bool:
@@ -727,6 +856,18 @@ def unexplained_colors(cells: list[str], swatches: list[str]) -> list[str]:
     """
     keyed = {parse_color(color) for color in swatches}
     return sorted({color for color in cells if parse_color(color) not in keyed})
+
+
+def telling_colors(cells: list[str], missing: str | None) -> list[str]:
+    """The cell colors that say something: every one but the key's gray.
+
+    A station on one day is one reading, and under a floor of three every cell
+    of every state's drill-down drew the gray of a cell with too few.
+    """
+    gray = parse_color(missing or "")
+    if gray is None:
+        return []
+    return sorted({color for color in cells if parse_color(color) != gray})
 
 
 def ojs_sources(page: str) -> list[str]:
@@ -1106,7 +1247,7 @@ def changes_key_check(page, failures: Failures, step: str) -> None:
         failures.add(f"{step}: the heatmap has no key")
     elif missing:
         failures.add(f"{step}: the key has no swatch for the cell colors {missing}")
-    elif "fewer than 3 readings" not in key["text"]:
+    elif "no earlier reading" not in key["text"]:
         failures.add(f"{step}: the key does not say what the gray means: {key['text']!r}")
     else:
         print(f"{step}: ok, the key explains all {len(key['cells'])} cell colors", flush=True)
@@ -1122,6 +1263,198 @@ def changes_cells_check(page, failures: Failures, step: str) -> None:
         failures.add(f"{step}: rows under {MIN_CELL_PX}px tall in {thin}")
     else:
         print(f"{step}: ok, every row of {len(charts)} heatmap(s) can be seen", flush=True)
+
+
+def changes_dates_check(page, failures: Failures, step: str) -> None:
+    """Every date under a Changes heatmap can be read: none is drawn over another."""
+    charts = page.evaluate(CHANGES_DATES_JS)
+    bare = [chart["chart"] for chart in charts if not chart["labels"]]
+    clashes = [
+        f"{chart['chart']}: {a!r} and {b!r}"
+        for chart in charts
+        for a, b in overlapping_labels(chart["labels"])
+    ]
+    if not charts:
+        failures.add(f"{step}: no heatmap to read the dates of")
+    elif bare:
+        failures.add(f"{step}: no dates under {bare}")
+    elif clashes:
+        failures.add(
+            f"{step}: {len(clashes)} pair(s) of dates drawn over each other: {clashes[:3]}"
+        )
+    else:
+        count = sum(len(chart["labels"]) for chart in charts)
+        print(f"{step}: ok, {count} date label(s), none over another", flush=True)
+
+
+def changes_drill_check(page, failures: Failures, step: str) -> None:
+    """A state's drill-down colors its stations' days."""
+    key = page.evaluate(CHANGES_KEY_JS)
+    told = telling_colors(key["cells"], key["missing"])
+    if not key["cells"]:
+        failures.add(f"{step}: the drill-down drew no cells")
+    elif not told:
+        failures.add(f"{step}: every cell of the drill-down is the key's gray")
+    else:
+        print(f"{step}: ok, the drill-down draws {len(told)} color(s) besides the gray", flush=True)
+
+
+def changes_small_states_check(page, failures: Failures, step: str, small: list[str]) -> None:
+    """A state with one or two stations shows which way their prices moved.
+
+    Under a floor of three readings to a cell, every one of `small` was a row
+    of gray: Costco's one station in Arkansas never showed a price moving. Any
+    one of them drawn in a color says the floor is gone, and a state whose
+    only station opened today is still free to be gray.
+    """
+    if not small:
+        print(f"{step}: every state has three stations, so no small state to check", flush=True)
+        return
+    key = page.evaluate(CHANGES_KEY_JS)
+    rows = page.evaluate(CHANGES_ROW_COLORS_JS)
+    drawn = [state for state in small if state in rows]
+    told = [state for state in drawn if telling_colors(rows[state], key["missing"])]
+    if not drawn:
+        failures.add(f"{step}: no row for any of the small states {small[:6]}")
+    elif not told:
+        failures.add(f"{step}: every state with under three stations is all gray: {drawn[:6]}")
+    else:
+        print(f"{step}: ok, {len(told)} of {len(drawn)} small state(s) are colored", flush=True)
+
+
+def changes_tip_check(page, failures: Failures, step: str, *, tap: bool = False) -> None:
+    """Pointing at a cell, or tapping one on a phone, says what it counted.
+
+    The cells carried a `title`, which a browser shows after a second of hover
+    and a touch screen never shows at all.
+    """
+    spot = page.evaluate(CHANGES_SPOT_JS)
+    if not spot:
+        failures.add(f"{step}: no heatmap cell to point at")
+        return
+    if tap:
+        page.touchscreen.tap(spot["x"], spot["y"])
+    else:
+        page.mouse.move(spot["x"], spot["y"])
+    page.wait_for_timeout(700)
+    text = page.evaluate(CHANGES_TIP_JS)
+    how = "tapping" if tap else "pointing at"
+    if "reading" not in text:
+        failures.add(f"{step}: {how} a cell raised no tip that counts its readings ({text!r})")
+    else:
+        print(f"{step}: ok, {how} a cell reads {text.splitlines()[0][:40]!r}", flush=True)
+
+
+def changes_mode_check(page, failures: Failures, step: str) -> None:
+    """Changes opens on which way prices moved, with how often they moved one
+    click away and carried in the link."""
+    key = page.evaluate(CHANGES_KEY_JS)
+    summary = page.locator(".cgp-changes-summary")
+    words = summary.first.inner_text() if summary.count() else ""
+    if "fell" not in key["text"] or "rose" not in key["text"]:
+        failures.add(f"{step}: the key does not name the two directions: {key['text']!r}")
+    elif not all(word in words for word in ("fell", "rose", "unchanged")):
+        failures.add(f"{step}: the summary does not split its readings by direction: {words!r}")
+    else:
+        print(f"{step}: ok, colored by direction: {words.splitlines()[0][:60]!r}", flush=True)
+    if not page.locator('[data-control="changemode"] input[data-value="often"]').count():
+        failures.add(f"{step}: no control to color by how often the price moved")
+        return
+    set_control(page, "changemode", "often")
+    try:
+        page.wait_for_function(
+            """() => (document.querySelector(".cgp-changes-key") || {textContent: ""})
+                 .textContent.includes("100%")""",
+            timeout=10_000,
+        )
+    except Exception:
+        failures.add(f"{step}: coloring by how often never drew its 0% to 100% key")
+    wait_idle(page, failures, f"{step} often")
+    if "show=often" not in page.url:
+        failures.add(f"{step}: the link does not carry the coloring ({page.url})")
+    changes_key_check(page, failures, f"{step} often")
+    set_control(page, "changemode", "direction")
+    wait_idle(page, failures, f"{step} direction")
+
+
+def controlbar_gap_check(page, failures: Failures, step: str) -> None:
+    """Scrolled down the page, nothing shows through above the control bar."""
+    page.evaluate("window.scrollTo({top: 900, behavior: 'instant'})")
+    page.wait_for_timeout(700)
+    gap = page.evaluate(CONTROL_BAR_GAP_JS)
+    if gap is None:
+        failures.add(f"{step}: no control bar to place")
+    elif gap > 2:
+        failures.add(f"{step}: {gap:.0f}px of the page shows above the control bar")
+    else:
+        print(f"{step}: ok, the control bar follows the navbar up the page", flush=True)
+
+
+def phone_bar_check(page, failures: Failures, step: str, view: str) -> None:
+    """On a phone the controls fold into one line that says what is chosen."""
+    bar = page.evaluate(CONTROL_BAR_JS)
+    if not bar or not bar["summary"]:
+        failures.add(f"{step}: the control bar has no one-line summary")
+        return
+    folded = bar["height"] - bar["alert"]
+    wanted = ["Regular", "Local" if "cur=Local" in view else "USD"]
+    unsaid = [word for word in wanted if word not in bar["summary"]]
+    if bar["options"] > 0:
+        failures.add(f"{step}: the options are on show before the bar is opened")
+    elif folded > PHONE_BAR_PX:
+        failures.add(f"{step}: the folded control bar is {folded:.0f}px tall, not {PHONE_BAR_PX}")
+    elif unsaid:
+        failures.add(f"{step}: the summary {bar['summary']!r} does not say {unsaid}")
+    else:
+        print(f"{step}: ok, the controls fold into {bar['summary']!r}", flush=True)
+
+
+def phone_bar_opens_check(page, failures: Failures, step: str) -> None:
+    """A tap on the summary opens the controls, a choice there shows in the
+    summary, and a second tap folds them away."""
+    toggle = page.locator(".cgp-controlbar-toggle")
+    if not toggle.count():
+        failures.add(f"{step}: no summary to tap")
+        return
+    toggle.click()
+    opened = page.evaluate(CONTROL_BAR_JS)
+    if opened["options"] <= 0 or opened["expanded"] != "true":
+        failures.add(f"{step}: tapping the summary did not open the controls")
+        return
+    page.locator('[data-control="grade"] label', has_text="Premium").click()
+    try:
+        page.wait_for_function(
+            """() => document.querySelector(".cgp-controlbar-toggle")
+                 .textContent.includes("Premium")""",
+            timeout=10_000,
+        )
+    except Exception:
+        failures.add(f"{step}: choosing Premium did not reach the summary")
+    still = page.evaluate(CONTROL_BAR_JS)
+    if still["options"] <= 0:
+        failures.add(f"{step}: choosing a grade folded the controls away")
+    page.locator('[data-control="grade"] label', has_text="Regular").click()
+    page.locator(".cgp-controlbar-toggle").click()
+    folded = page.evaluate(CONTROL_BAR_JS)
+    if folded["options"] > 0 or folded["expanded"] != "false":
+        failures.add(f"{step}: a second tap did not fold the controls away")
+    else:
+        print(f"{step}: ok, the summary opens the controls and folds them", flush=True)
+
+
+def station_phone_check(page, failures: Failures, step: str) -> None:
+    """On a phone the search box has room to type in, and a price change is
+    one line of its table."""
+    share = page.evaluate(STATION_SEARCH_JS)
+    wrapped = page.evaluate(WRAPPED_CHANGE_ROWS_JS)
+    if share is None:
+        failures.add(f"{step}: no search box")
+    elif share < 0.6:
+        failures.add(f"{step}: the search box is {share:.0%} of its card's width")
+    elif wrapped:
+        failures.add(f"{step}: {wrapped} price-change row(s) run onto a second line")
+    else:
+        print(f"{step}: ok, a {share:.0%} search box and one-line price changes", flush=True)
 
 
 def strip_check(page, failures: Failures, step: str, expected: int) -> None:
@@ -1233,15 +1566,25 @@ def two_chain_steps(page, base_url: str, latest: list[dict], failures: Failures,
         failures.add(f"step 5 changes {region}: rows with no readings in {blank}")
     else:
         print(f"step 5 changes {region}: ok, each chain lists only its stations", flush=True)
+    changes_drill_check(page, failures, f"step 5 changes {region}")
     chart_text_check(page, failures, f"step 5 changes {region}")
     check_clean(page, failures, "step 5 changes", collected)
 
 
-def open_page(browser, viewport: dict, collected: dict, origin: str, *, scheme: str = "light"):
+def open_page(
+    browser,
+    viewport: dict,
+    collected: dict,
+    origin: str,
+    *,
+    scheme: str = "light",
+    touch: bool = False,
+):
     """A page at `viewport` that counts cell starts, stubs tiles and fonts, and
     collects the site's own console errors into `collected`. `scheme` is the
-    color scheme the browser asks for, which the site follows."""
-    page = browser.new_page(viewport=viewport, color_scheme=scheme)
+    color scheme the browser asks for, which the site follows; `touch` gives it
+    a touch screen, as a phone has."""
+    page = browser.new_page(viewport=viewport, color_scheme=scheme, has_touch=touch)
     page.add_init_script(TRACK_CELL_STARTS_SCRIPT)
     page.on(
         "console",
@@ -1295,11 +1638,14 @@ def freshness_steps(browser, base_url: str, meta: dict, stations: list[dict], fa
         page.close()
 
 
-def phone_steps(page, base_url: str, first_key: str, failures: Failures, collected) -> None:
+def phone_steps(
+    page, base_url: str, first_key: str, state: str | None, failures: Failures, collected
+) -> None:
     """Every page at a phone's width: nothing scrolls sideways, every chart label
-    is drawn whole and every caption sits over its options. Most of the map is
-    on the first screen, and a link to a station opens on that station rather
-    than on a list of forty others."""
+    is drawn whole and every caption sits over its options. The controls fold
+    into one line, most of the map is on the first screen, and a link to a
+    station opens on that station rather than on a list of forty others.
+    `state` is the one whose Changes drill-down has the longest names to fit."""
     views = [
         *PAGES,
         "compare.html?cur=Local",
@@ -1313,6 +1659,7 @@ def phone_steps(page, base_url: str, first_key: str, failures: Failures, collect
         wait_idle(page, failures, step)
         overflow_check(page, failures, step)
         chart_text_check(page, failures, step)
+        phone_bar_check(page, failures, step, view)
         # A phone puts a chain on a line under its place, so a label there is
         # twice as tall and collides sooner.
         named = view.startswith("station.html?") or (
@@ -1347,6 +1694,27 @@ def phone_steps(page, base_url: str, first_key: str, failures: Failures, collect
                 failures.add(f"{step}: the station's chart starts below the first screen ({box})")
             else:
                 print(f"{step}: ok, the station's chart is on the first screen", flush=True)
+            station_phone_check(page, failures, step)
+        if view == "changes.html":
+            changes_dates_check(page, failures, step)
+            if state:
+                # One row a station, named in the margin: the most there is to
+                # fit, and the cells a finger has to be able to ask about.
+                drilled = f"{step} {state}"
+                drill = page.locator("form", has_text="Drill into").locator("select")
+                drill.select_option(label=state)
+                page.wait_for_selector('svg[aria-label*="by station"]', timeout=IDLE_TIMEOUT_MS)
+                wait_idle(page, failures, drilled)
+                overflow_check(page, failures, drilled)
+                chart_text_check(page, failures, drilled)
+                changes_cells_check(page, failures, drilled)
+                changes_dates_check(page, failures, drilled)
+                changes_drill_check(page, failures, drilled)
+                changes_tip_check(page, failures, drilled, tap=True)
+        if view == "about.html":
+            # The longest page, so there is a way down it to scroll.
+            phone_bar_opens_check(page, failures, step)
+            controlbar_gap_check(page, failures, step)
         check_clean(page, failures, step, collected)
 
 
@@ -1467,6 +1835,9 @@ def main() -> int:
                 site_dir / "data" / "summary_daily.parquet", "regular"
             )
             smallest_state = fewest_stations_state(latest, "regular")
+            small_states = sorted(
+                state for state, count in stations_by_state(latest, "regular").items() if count < 3
+            )
             for name in PAGES:
                 page_id = name.removesuffix(".html")
                 requested: list[str] = []
@@ -1489,6 +1860,10 @@ def main() -> int:
                 elif page_id == "changes":
                     changes_key_check(page, failures, "step 2 changes")
                     changes_cells_check(page, failures, "step 2 changes")
+                    changes_small_states_check(page, failures, "step 2 changes", small_states)
+                    changes_dates_check(page, failures, "step 2 changes")
+                    changes_tip_check(page, failures, "step 2 changes")
+                    changes_mode_check(page, failures, "step 2 changes")
                     # The state with the fewest stations has the fewest rows to
                     # share the chart's height, which is where a short one shows.
                     if smallest_state:
@@ -1500,8 +1875,10 @@ def main() -> int:
                         )
                         wait_idle(page, failures, step)
                         changes_cells_check(page, failures, step)
+                        changes_drill_check(page, failures, step)
                 elif page_id == "about":
                     grade_table_check(page, failures, "step 2 about", meta, latest)
+                    controlbar_gap_check(page, failures, "step 2 about")
                 chart_text_check(page, failures, f"step 2 {page_id}")
                 chart_scale_check(page, failures, f"step 2 {page_id}")
                 check_clean(page, failures, f"step 2 {page_id}", collected)
@@ -1726,8 +2103,15 @@ def main() -> int:
                 print("step 5: one chain in latest.json, so the two-chain checks skip", flush=True)
 
             # Step 6: a phone.
-            phone = open_page(browser, PHONE, collected, origin)
-            phone_steps(phone, base_url, first_key, failures, collected)
+            phone = open_page(browser, PHONE, collected, origin, touch=True)
+            phone_steps(
+                phone,
+                base_url,
+                first_key,
+                longest_name_state(latest, "regular"),
+                failures,
+                collected,
+            )
 
             # Step 7: the freshness notice, per feed and per country.
             freshness_steps(browser, base_url, meta, stations, failures, collected)

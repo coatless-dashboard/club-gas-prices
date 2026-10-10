@@ -284,28 +284,36 @@ stationChanges = {
   }
   const rows = changes.map((change) => {
     // Pick currency first, then derive the delta from that same pair.
-    const unit = currency === "USD" ? "USD" : change.currency;
     const from = currency === "USD" ? change.fromUsd : change.from;
     const to = currency === "USD" ? change.toUsd : change.to;
     const delta = from == null || to == null ? null : to - from;
     const pct = delta != null && from > 0 ? (delta / from) * 100 : null;
+    // The arrow wears the color a fall or a rise has on Changes; the figure
+    // beside it stays in the text's own.
+    const arrow =
+      delta == null
+        ? "—"
+        : html`<span class=${delta > 0 ? "cgp-up" : "cgp-down"}>${delta > 0 ? "▲" : "▼"}</span>`;
     return html`<tr>
       <td>${change.d}</td>
       <td>${GRADE_LABELS[change.grade] || change.grade}</td>
       <td class="cgp-num">${fmtNumber(perVolume(from, volume), priceDigits)}</td>
-      <td class="cgp-num">${fmtNumber(perVolume(to, volume), priceDigits)} ${unit}${volumeShort}</td>
-      <td class=${"cgp-num " + (delta == null ? "" : delta > 0 ? "cgp-up" : "cgp-down")}>${
-        delta == null ? "—" : delta > 0 ? "▲" : "▼"
-      } ${pct == null ? "" : fmtPct(pct)}</td>
+      <td class="cgp-num">${fmtNumber(perVolume(to, volume), priceDigits)}</td>
+      <td class="cgp-num">${arrow} ${pct == null ? "" : fmtPct(pct)}</td>
     </tr>`;
   });
+  // A station prices in one currency, so the unit is said once, above the
+  // table: in every row it took a phone's rows onto a second line.
+  const unit = currency === "USD" ? "USD" : changes[0].currency;
   return html`<div>
-    <table class="cgp-table">
-      <thead><tr><th>First seen</th><th>Grade</th><th class="cgp-num">From</th>
-        <th class="cgp-num">To</th><th class="cgp-num">Change</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-
+    <div class="cgp-notice">Prices in ${unit} ${volumeLabel}.</div>
+    <div class="cgp-table-scroll">
+      <table class="cgp-table cgp-changes-table">
+        <thead><tr><th>First seen</th><th>Grade</th><th class="cgp-num">From</th>
+          <th class="cgp-num">To</th><th class="cgp-num">Change</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   </div>`;
 }
 ```

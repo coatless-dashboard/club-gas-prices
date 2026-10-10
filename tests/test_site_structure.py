@@ -689,7 +689,7 @@ def test_changes_rows_are_per_chain_and_keyed_on_the_station():
     chart = changes.split("function changesChart(", 1)[1].split("\n}\n", 1)[0]
     assert "mine.map((c) => c.key)" in chart
     assert "cells.map((c) => c.key)" not in chart
-    assert "tickFormat: labelOf" in chart
+    assert "tickFormat: (key) => rowText.get(key)" in chart
     assert "station_key: nameOf.get(" not in changes
 
 
@@ -702,6 +702,72 @@ def test_every_changes_row_gets_its_full_pitch():
     assert "height: top + bottom + keys.length * pitch," in chart
     assert "marginTop: top," in chart
     assert "marginBottom: bottom," in chart
+
+
+def test_changes_counts_which_way_each_price_moved():
+    """`changed` says a price moved and not which way, so both grains count the
+    rises and the falls against the station's previous reading themselves."""
+    changes = (SITE / "changes.qmd").read_text(encoding="utf-8")
+    queries = re.findall(r"db\.query\(`(.*?)`\)", changes, re.S)
+    assert len(queries) == 2
+    for query in queries:
+        assert "lag(price_local_per_litre) OVER" in query
+        assert "AS n_up" in query and "AS n_down" in query
+
+
+def test_a_cell_is_colored_on_whatever_readings_it_has():
+    """A floor of three readings left every cell of every drill-down gray,
+    where a station's row has one reading a day, and at the state grain grayed
+    out every state with one or two stations: Costco's one in Arkansas never
+    showed a price moving. A cell is gray only with nothing to compare."""
+    changes = (SITE / "changes.qmd").read_text(encoding="utf-8")
+    assert "const told = cell.n_obs > 0;" in changes
+    assert "minReadings" not in changes
+    assert "fewer than 3 readings" not in changes
+    assert "no earlier reading" in changes
+
+
+def test_the_changes_coloring_is_a_control_a_link_carries():
+    text = read_qmd()
+    params = text.split("CONTROL_PARAMS = {", 1)[1].split("}", 1)[0]
+    assert 'changemode: "show"' in params
+    changes = (SITE / "changes.qmd").read_text(encoding="utf-8")
+    assert 'radioControl(\n  "changemode"' in changes
+
+
+def test_the_diverging_ramp_is_two_arms_about_a_neutral():
+    """Blue for a fall and red for a rise, as the price ramp has them, about a
+    neutral rather than the ramp's amber: a hue at the midpoint reads as a
+    third direction. Each theme sets its own steps, because an arm has to grow
+    stronger toward its end and the dark ramp's second blue is paler than its
+    first."""
+    shared = (SITE / "_shared.qmd").read_text(encoding="utf-8")
+    block = shared.split("diverging: [", 1)[1].split("]", 1)[0]
+    tokens = re.findall(r"--cgp-[a-z0-9-]+", block)
+    assert tokens == ["--cgp-fall-2", "--cgp-fall-1", "--cgp-flat", "--cgp-rise-1", "--cgp-rise-2"]
+    for path in (CUSTOM, DARK):
+        text = path.read_text(encoding="utf-8")
+        for token in tokens:
+            assert f"{token}: #" in text, f"{path.name} is missing {token}"
+
+
+def test_the_control_bar_follows_the_navbar_off_the_page():
+    """Quarto slides the navbar away on the way down a page. The bar stayed a
+    navbar's height from the top, and the page showed through the gap."""
+    scss = CUSTOM.read_text(encoding="utf-8")
+    assert "#quarto-header.headroom--unpinned ~ #quarto-content .cgp-controlbar" in scss
+
+
+def test_the_controls_fold_behind_a_summary_on_a_phone():
+    controls = (SITE / "_controls.qmd").read_text(encoding="utf-8")
+    assert "cgp-controlbar-toggle" in controls
+    assert "::: {#cgp-controls .cgp-controlbar-panel}" in controls
+    assert 'aria-controls="cgp-controls"' in controls
+    # The summary names the choices, so it is built from the controls' values.
+    summary = controls.split("controlSummary = {", 1)[1].split("\n}\n", 1)[0]
+    for name in ("grade", "currency", "volumeLabel", "chain"):
+        assert re.search(rf"\b{name}\b", summary), name
+    assert "aria-expanded" in summary
 
 
 def test_the_coverage_strip_draws_every_series():

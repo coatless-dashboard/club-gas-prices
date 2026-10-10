@@ -26,7 +26,7 @@ and that is where the dataset, its schema and its release history live.
 | Map | Every station with coordinates, colored by rank within its country or on an absolute USD scale. Stations group while the map shows a continent and separate as it is zoomed in. The popup gives the published price, the local price, the USD price, the exchange rate used and the age of the reading. |
 | Compare | One row per country for the selected grade, and one per chain where a country has two: median, p25–p75 and the number of stations, in USD or in local currency, with a breakdown by region. |
 | Trends | Daily medians over time for every country, and regional series for one country at a time. Each chain is drawn as its own line. |
-| Changes | How often a posted price moved, as a heatmap by chain and US state, with a drill-down to one state's stations. |
+| Changes | Which way posted prices moved — more stations cutting or more raising — as a heatmap by chain and US state, with a drill-down to one state's stations. A toggle colors it by how often a price moved instead. |
 | Station | One station's price history per grade, its last thirty price changes, directions, its warehouse page where the source publishes one, and the five nearest active stations. Deep-linkable as `station.html?station=<station_key>`. |
 | About | Sources and request URLs, the capture schedule, the grade table, units, the exchange-rate method, known limits and attributions. |
 
@@ -34,7 +34,8 @@ Three controls apply to every page: **Grade** (`regular`, `premium`, `diesel`),
 **Currency** (`USD` or `Local`) and **Volume** (`per US gallon` or `per litre`). They
 live in the query string, so a link carries what the sender was looking at. USD values
 always use the exchange rate stored with each row, so a chart of the past shows the USD
-prices of the past, not today's conversion.
+prices of the past, not today's conversion. On a phone the controls fold into one line
+that says what is chosen, and open on a tap.
 
 Where a country has more than one chain, each is a separate series and they are never
 pooled into one number.

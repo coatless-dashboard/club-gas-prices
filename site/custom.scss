@@ -21,6 +21,13 @@ $navbar-fg: #f4f7f8 !default;
   --cgp-ramp-3: #e9c46a;
   --cgp-ramp-4: #e76f51;
   --cgp-ramp-5: #b3261e;
+  // Which way a price moved: the ramp's blue for a fall and its red for a rise,
+  // two steps an arm, about a neutral where the ramp has its amber.
+  --cgp-fall-2: #2a6f97;
+  --cgp-fall-1: #61a5c2;
+  --cgp-flat: #dfe3e6;
+  --cgp-rise-1: #e76f51;
+  --cgp-rise-2: #b3261e;
   --cgp-missing: #9aa0a6;
   --cgp-marker-stroke: #ffffff;
   --cgp-grid: rgba(27, 31, 35, 0.12);
@@ -194,6 +201,21 @@ main.content > p {
 .cgp-table th.cgp-num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+// One line a price change, on any screen: the table scrolls before it wraps.
+.cgp-changes-table th,
+.cgp-changes-table td {
+  white-space: nowrap;
+}
+
+// A fall and a rise, in the colors Changes gives them.
+.cgp-down {
+  color: var(--cgp-fall-2);
+}
+
+.cgp-up {
+  color: var(--cgp-rise-2);
 }
 
 // Let long URLs wrap inside table cells.
@@ -431,6 +453,12 @@ td code {
   align-self: flex-start;
 }
 
+// And a select under its caption: Observable centers a form's items on its
+// cross axis, which stacked is across, and set the box 100px to the right.
+.cgp-field:not(.cgp-field--inline) > select {
+  align-self: flex-start;
+}
+
 .cgp-field--inline > div {
   order: 1;
   flex: 0 0 auto;
@@ -475,6 +503,8 @@ td code {
 .cgp-controlbar {
   position: sticky;
   top: 3.25rem;
+  // The navbar's own timing, so the two move as one.
+  transition: top 200ms linear;
   z-index: 1020;
   display: flex;
   flex-wrap: wrap;
@@ -495,13 +525,101 @@ td code {
   min-width: 0;
 }
 
-// On phones: captions are visually hidden (the options name themselves), pills
-// tighten, and the groups share rows to minimize sticky-bar height.
-@media (max-width: 575.98px) {
+// Quarto slides the navbar away on the way down a page and back on the way up.
+// The bar follows it, rather than holding a navbar's height of the page in
+// view above itself.
+#quarto-header.headroom--unpinned ~ #quarto-content .cgp-controlbar {
+  top: 0;
+}
+
+// The one-line summary is a phone's. Here the groups it folds away lay out as
+// the bar's own items, as though their wrappers were not there.
+.cgp-controlbar-fold {
+  display: none;
+}
+
+.cgp-controlbar-panel,
+.cgp-freshness {
+  display: contents;
+}
+
+// On a phone, held either way up, the bar is one line that says what is chosen
+// and opens on a tap to the groups. Open and stuck to the top it was a fifth of
+// an upright phone's screen and nearly half of one on its side, so it is only
+// that tall while it is being used.
+@media (max-width: 575.98px), (max-height: 480px) {
   .cgp-controlbar {
     gap: 0.3rem 0.9rem;
-    padding: 0.4rem 0 0.45rem;
+    padding: 0.25rem 0 0.3rem;
     margin-bottom: 0.75rem;
+  }
+
+  .cgp-controlbar-fold {
+    display: block;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .cgp-controlbar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    width: 100%;
+    min-height: 2.4rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.85rem;
+    text-align: left;
+  }
+
+  .cgp-controlbar-summary {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cgp-controlbar-cue {
+    flex: 0 0 auto;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--cgp-control-border);
+    border-radius: 999px;
+    background: var(--cgp-control-bg);
+    font-size: 0.8rem;
+  }
+
+  .cgp-controlbar.is-open .cgp-controlbar-cue {
+    background: var(--cgp-control-active);
+    border-color: var(--cgp-control-active);
+    color: var(--cgp-control-active-fg);
+  }
+
+  .cgp-controlbar:not(.is-open) .cgp-controlbar-panel {
+    display: none;
+  }
+
+  // Folded, the bar keeps a warning that the data is stale and drops the
+  // notice that it is not.
+  .cgp-controlbar:not(.is-open) .cgp-freshness:not(:has(.cgp-alert)) {
+    display: none;
+  }
+
+  .cgp-controlbar .cgp-alert {
+    margin: 0;
+  }
+}
+
+// On phones: the groups' captions are visually hidden (the options name
+// themselves) and the pills tighten.
+@media (max-width: 575.98px) {
+  // A phone has no width to give away: 26px a side left its charts 338px.
+  #quarto-content.page-layout-custom {
+    padding-inline: 1rem;
   }
 
   .cgp-controlbar .cgp-field {
@@ -525,12 +643,13 @@ td code {
     gap: 0.25rem;
   }
 
-  // Override Observable's own option margins.
+  // Override Observable's own option margins. Tall enough for a thumb, now
+  // that the bar is only this tall while it is open.
   .cgp-controlbar .cgp-field > div > label {
     position: relative;
     gap: 0.25rem;
     margin: 0;
-    padding: 0.2rem 0.55rem;
+    padding: 0.4rem 0.75rem;
     font-size: 0.8rem;
   }
 
@@ -542,6 +661,30 @@ td code {
   .cgp-search > .cgp-field input {
     min-width: 0;
     flex: 1 1 auto;
+  }
+
+  // And give it the row. Sized by its content beside a caption and a count,
+  // the box was 150px, less than its own placeholder, which says all the
+  // caption did.
+  .cgp-search > .cgp-field > label {
+    position: absolute;
+    width: 1px !important;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .cgp-search > .cgp-field > div {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .cgp-table th,
+  .cgp-table td {
+    padding-inline: 0.35rem;
   }
 
   // Country pills scroll horizontally on phones.

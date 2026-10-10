@@ -14,19 +14,34 @@ pageWantsHistory = true
 
 ```{ojs}
 //| output: false
-// Fraction of observed transitions where the price changed.
+// How far back the heatmap reaches.
 changesWindowDays = 90
+
+// A reading's direction is measured from the one before it, so the queries
+// read this far past the window to find the first day's.
+changesLookbackDays = 14
 ```
 
 ```{ojs}
-// Visible chunk so the control is reachable (output: false would hide it).
+//| output: false
+viewof changesMode = radioControl(
+  "changemode",
+  [["Direction", "direction"], ["How often", "often"]],
+  "direction",
+  "Color by"
+)
+
 viewof changesPlace = asField(
   Inputs.select(["All US states", ...changesStates], {
     label: "Drill into",
     value: "All US states"
-  }),
-  {inline: true}
+  })
 )
+```
+
+```{ojs}
+// Visible chunk so the controls are reachable (output: false would hide them).
+html`<div class="cgp-controls-row">${[viewof changesMode, viewof changesPlace]}</div>`
 ```
 
 ```{ojs}
@@ -39,26 +54,36 @@ changesStates = {
   return [...seen].sort();
 }
 
-// State grain: one cell per (chain, state, day).
+// State grain: one cell per (chain, state, day). `changed` says a price moved
+// and not which way, so the rises and falls are counted here, against the same
+// previous reading the flag was set from.
 changesByState = db
   ? await db.query(`
-      WITH win AS (
-        SELECT station_key, brand, capture_date, changed
+      WITH priced AS (
+        SELECT station_key, brand, capture_date, changed,
+               price_local_per_litre - lag(price_local_per_litre) OVER (
+                 PARTITION BY station_key ORDER BY capture_date
+               ) AS delta
         FROM history
         WHERE grade = ${sqlText(grade)}${chainClause}
-          AND capture_date > (SELECT max(capture_date) FROM history) - ${changesWindowDays}
+          AND capture_date > (SELECT max(capture_date) FROM history) - ${
+            changesWindowDays + changesLookbackDays
+          }
       ),
       scoped AS (
-        SELECT w.brand, s.region, w.station_key, w.capture_date, w.changed
-        FROM win w JOIN stations s ON s.station_key = w.station_key
+        SELECT p.brand, s.region, p.station_key, p.capture_date, p.changed, p.delta
+        FROM priced p JOIN stations s ON s.station_key = p.station_key
         WHERE s.country = 'US' AND s.region IS NOT NULL
+          AND p.capture_date > (SELECT max(capture_date) FROM history) - ${changesWindowDays}
       )
       SELECT brand,
              region,
              strftime(capture_date, '%Y-%m-%d') AS d,
-             count(*) FILTER (WHERE changed IS NOT NULL) AS n_obs,
-             count(*) FILTER (WHERE changed)             AS n_changed,
-             count(DISTINCT station_key)                 AS n_stations
+             count(*) FILTER (WHERE changed IS NOT NULL)   AS n_obs,
+             count(*) FILTER (WHERE changed)               AS n_changed,
+             count(*) FILTER (WHERE changed AND delta > 0) AS n_up,
+             count(*) FILTER (WHERE changed AND delta < 0) AS n_down,
+             count(DISTINCT station_key)                   AS n_stations
       FROM scoped
       GROUP BY 1, 2, 3
       ORDER BY brand, region, d
@@ -76,15 +101,27 @@ changesStationKeys = {
 
 changesByStation = db && changesStationKeys.length
   ? await db.query(`
+      WITH priced AS (
+        SELECT station_key, brand, capture_date, changed,
+               price_local_per_litre - lag(price_local_per_litre) OVER (
+                 PARTITION BY station_key ORDER BY capture_date
+               ) AS delta
+        FROM history
+        WHERE station_key IN (${sqlList(changesStationKeys)})
+          AND grade = ${sqlText(grade)}
+          AND capture_date > (SELECT max(capture_date) FROM history) - ${
+            changesWindowDays + changesLookbackDays
+          }
+      )
       SELECT station_key,
              brand,
              strftime(capture_date, '%Y-%m-%d') AS d,
-             count(*) FILTER (WHERE changed IS NOT NULL) AS n_obs,
-             count(*) FILTER (WHERE changed)             AS n_changed
-      FROM history
-      WHERE station_key IN (${sqlList(changesStationKeys)})
-        AND grade = ${sqlText(grade)}
-        AND capture_date > (SELECT max(capture_date) FROM history) - ${changesWindowDays}
+             count(*) FILTER (WHERE changed IS NOT NULL)   AS n_obs,
+             count(*) FILTER (WHERE changed)               AS n_changed,
+             count(*) FILTER (WHERE changed AND delta > 0) AS n_up,
+             count(*) FILTER (WHERE changed AND delta < 0) AS n_down
+      FROM priced
+      WHERE capture_date > (SELECT max(capture_date) FROM history) - ${changesWindowDays}
       GROUP BY 1, 2, 3
       ORDER BY station_key, d
     `)
@@ -106,26 +143,26 @@ function changesDomain(rows) {
   return out;
 }
 
-// Bin into ISO weeks when daily cells get too narrow. Sums counts (not means
-// of rates) so thin days don't get equal weight.
-changesMaxBins = Math.max(14, Math.floor((chartWidth - 46) / 3))
+// The narrowest a day's cell is drawn. With less room than this a day, days
+// are binned into weeks: a phone has a third of a desktop's width, and less
+// again once a state's station names take their margin.
+CHANGES_MIN_BIN_PX = 5
 
-function isoWeek(day) {
+// The Monday of a day's week, written as a day is, so a week's bin sorts and
+// labels like one.
+function weekStart(day) {
   const d = new Date(day + "T00:00:00Z");
-  const thursday = new Date(d);
-  thursday.setUTCDate(d.getUTCDate() + 3 - ((d.getUTCDay() + 6) % 7));
-  const first = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
-  const week =
-    1 + Math.round(((thursday - first) / 86400000 - 3 + ((first.getUTCDay() + 6) % 7)) / 7);
-  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
 }
 
-function changesBinned(rows, keyName) {
+// Sums counts (not means of rates) so thin days don't get equal weight.
+function changesBinned(rows, keyName, maxBins) {
   const domain = changesDomain(rows);
-  const weekly = domain.length > changesMaxBins;
+  const weekly = domain.length > maxBins;
   const bins = new Map();
   for (const row of rows) {
-    const bin = weekly ? isoWeek(row.d) : row.d;
+    const bin = weekly ? weekStart(row.d) : row.d;
     const key = [row[keyName], row.brand, bin].join(" :: ");
     const cell = bins.get(key) || {
       key: row[keyName],
@@ -133,51 +170,143 @@ function changesBinned(rows, keyName) {
       bin,
       n_obs: 0,
       n_changed: 0,
+      n_up: 0,
+      n_down: 0,
       n_stations: 0
     };
     cell.n_obs += Number(row.n_obs) || 0;
     cell.n_changed += Number(row.n_changed) || 0;
+    cell.n_up += Number(row.n_up) || 0;
+    cell.n_down += Number(row.n_down) || 0;
     cell.n_stations = Math.max(cell.n_stations, Number(row.n_stations) || 0);
     bins.set(key, cell);
   }
-  const cells = [...bins.values()].map((cell) => ({
-    ...cell,
-    // Fewer than 3 observations → no color (one reading isn't a rate).
-    rate: cell.n_obs >= 3 ? cell.n_changed / cell.n_obs : null
-  }));
-  const binDomain = weekly ? [...new Set(domain.map(isoWeek))] : domain;
+  const cells = [...bins.values()].map((cell) => {
+    // A cell is colored on whatever readings it has: a station's row has one
+    // a day, and so does a state with one station. A floor of three left
+    // both gray. Only a cell with nothing to compare has no color.
+    const told = cell.n_obs > 0;
+    return {
+      ...cell,
+      rate: told ? cell.n_changed / cell.n_obs : null,
+      net: told ? (cell.n_up - cell.n_down) / cell.n_obs : null
+    };
+  });
+  const binDomain = weekly ? [...new Set(domain.map(weekStart))] : domain;
   return {cells, binDomain, weekly};
+}
+
+// Five steps from every reading falling to every reading rising. The middle
+// one takes a cell within a fifth of even: prices that held, or as many up as
+// down.
+function colorForNet(net, pal) {
+  if (net == null || !isFinite(net)) return pal.missing;
+  const size = Math.abs(net);
+  const step = size < 0.2 ? 0 : size < 0.6 ? 1 : 2;
+  return pal.diverging[2 + Math.sign(net) * step];
+}
+
+// Plot sets a label in 10px system-ui. Measured rather than guessed at, so a
+// name shortened to fit its margin does fit it.
+labelWidth = {
+  const context = document.createElement("canvas").getContext("2d");
+  context.font = "10px system-ui, sans-serif";
+  return (text) => context.measureText(text).width;
+}
+
+function changesDay(day) {
+  return new Date(day + "T00:00:00Z").toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC"
+  });
+}
+
+function changesCount(n, noun) {
+  return `${n.toLocaleString()} ${noun}${n === 1 ? "" : "s"}`;
 }
 ```
 
 
-## How often the price moved
+## How the price moved
 ::: {.cgp-panel}
 
 ```{ojs}
 // Keyed on station_key, labelled by name.
-function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => key}) {
-  const {cells, binDomain} = changesBinned(rows, keyName);
-  if (!cells.length) return null;
-  const brands = [...new Set(cells.map((c) => c.brand))].sort();
-  // Size the gutter to the longest label (~5.2px/char), capped so the plot
-  // keeps at least 140px of area.
-  const longest = Math.max(0, ...cells.map((c) => (labelOf(c.key) || c.key).length));
+function changesChart(
+  rows,
+  keyName,
+  {rowLabel, mode, perStation, labelOf = (key) => key}
+) {
+  if (!rows.length) return null;
+  // A chain's chart is headed with its name, so a row need not end in it.
+  const rowName = new Map();
+  for (const row of rows) {
+    const name = labelOf(row[keyName]) || row[keyName];
+    const chain = BRAND_NAMES[row.brand];
+    rowName.set(
+      row[keyName],
+      chain && name.endsWith(" " + chain) ? name.slice(0, -chain.length - 1) : name
+    );
+  }
+  // The margin holds the longest name, up to 45% of the chart's width and
+  // always leaving the plot 140px; a name longer than that is cut to fit.
+  const widest = Math.max(0, ...[...rowName.values()].map(labelWidth));
   const left = Math.min(
-    Math.max(marginLeft, Math.ceil(16 + 5.2 * longest)),
-    Math.max(56, chartWidth - 24 - 140)
+    Math.max(56, Math.ceil(widest + 12)),
+    Math.max(56, Math.min(chartWidth - 24 - 140, Math.round(chartWidth * 0.45)))
   );
+  const rowText = new Map(
+    [...rowName].map(([key, name]) => {
+      let text = name;
+      while (text.length > 1 && labelWidth(text) > left - 12) {
+        text = text.slice(0, -2).trimEnd() + "…";
+      }
+      return [key, text];
+    })
+  );
+  const plotWidth = chartWidth - left - 24;
+  const {cells, binDomain, weekly} = changesBinned(
+    rows,
+    keyName,
+    Math.max(14, Math.floor(plotWidth / CHANGES_MIN_BIN_PX))
+  );
+  if (!cells.length) return null;
+  // Plot labels every value of a band scale, and a phone has room for five.
+  // Counted back from the newest bin, so that one is always named.
+  const stride = Math.ceil(binDomain.length / Math.max(2, Math.floor(plotWidth / 56)));
+  const dateTicks = binDomain.filter((_, i) => (binDomain.length - 1 - i) % stride === 0);
+  const fillOf = (c) =>
+    mode === "often" ? colorForFraction(c.rate, palette) : colorForNet(c.net, palette);
+  const tipOf = (c) => {
+    const head = `${rowName.get(c.key)} · ${weekly ? "week of " : ""}${changesDay(c.bin)}`;
+    if (!c.n_obs) return `${head}\nno earlier reading to compare`;
+    // One station's one reading is said in words; a state's are counted, so
+    // a color that rests on a single station says so.
+    if (perStation && c.n_obs === 1) {
+      const way = c.n_down ? "fell" : c.n_up ? "rose" : "unchanged";
+      return `${head}\n${way} since the previous reading`;
+    }
+    const held = c.n_obs - c.n_changed;
+    return (
+      `${head}\n${c.n_down} fell · ${c.n_up} rose\n${held} unchanged\n` +
+      `of ${changesCount(c.n_obs, "reading")}`
+    );
+  };
+  // A tip opens to one side of its cell and is cut off at the chart's edge,
+  // so its lines wrap short enough to fit beside a cell in the middle.
+  const tipLine = Math.max(9, Math.min(20, Math.floor((chartWidth / 2 - 40) / 12)));
+  const brands = [...new Set(cells.map((c) => c.brand))].sort();
 
-  return brands.map((brand) => {
+  const charts = brands.map((brand) => {
     const mine = cells.filter((c) => c.brand === brand);
     // Each chain's rows are its own set, sorted by label then key.
     const keys = [...new Set(mine.map((c) => c.key))].sort((a, b) => {
-      const [x, y] = [labelOf(a), labelOf(b)];
+      const [x, y] = [rowName.get(a), rowName.get(b)];
       return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
     });
-    // Rotated day labels need more room below the axis than Plot's default.
     const top = 28;
-    const bottom = 54;
+    const bottom = 30;
     // Height = margins + one full pitch per row.
     const pitch = chartWidth < 520 ? 11 : 16;
     return Plot.plot({
@@ -188,30 +317,25 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
       marginTop: top,
       marginBottom: bottom,
       style: {background: "transparent", color: palette.text},
-      x: {
-        domain: binDomain,
-        label: null,
-        ticks: Math.min(8, binDomain.length),
-        tickRotate: -35
-      },
-      y: {domain: keys, label: null, tickFormat: labelOf},
-      ariaLabel: `${
-        BRAND_NAMES[brand] || brand
-      }: how often the posted ${GRADE_LABELS[grade]} price moved, by ${rowLabel}`,
+      x: {domain: binDomain, label: null, ticks: dateTicks, tickFormat: changesDay},
+      y: {domain: keys, label: null, tickFormat: (key) => rowText.get(key)},
+      ariaLabel: `${BRAND_NAMES[brand] || brand}: ${
+        mode === "often" ? "how often" : "which way"
+      } the posted ${GRADE_LABELS[grade]} price moved, by ${rowLabel}`,
       marks: [
         Plot.cell(mine, {
           x: "bin",
           y: "key",
           // A function fill gets an identity color scale, so these follow
           // Quarto's light/dark toggle the way the map's markers do.
-          fill: (c) => (c.rate == null ? palette.missing : colorForFraction(c.rate, palette)),
-          title: (c) =>
-            `${labelOf(c.key)} · ${c.bin}\n` +
-            (c.rate == null
-              ? `not enough readings (${c.n_obs})`
-              : `${fmtShare(c.rate * 100)} of ${c.n_obs} readings moved`),
+          fill: fillOf,
           inset: 0.5
         }),
+        // A tip rather than a `title`, which a touch screen never shows.
+        Plot.tip(
+          mine,
+          Plot.pointer({x: "bin", y: "key", ...tipStyle(), lineWidth: tipLine, title: tipOf})
+        ),
         Plot.text([BRAND_NAMES[brand] || brand], {
           frameAnchor: "top-left",
           dy: -14,
@@ -221,6 +345,7 @@ function changesChart(rows, keyName, {rowLabel, marginLeft, labelOf = (key) => k
       ]
     });
   });
+  return {charts, weekly};
 }
 
 changesFigure = {
@@ -235,27 +360,48 @@ changesFigure = {
     }. This fills in as captures accumulate.</div>`;
   }
   const nameOf = new Map(filteredStations.map((s) => [s.station_key, s.name]));
-  const charts = changesChart(rows, drilled ? "station_key" : "region", {
+  const drawn = changesChart(rows, drilled ? "station_key" : "region", {
     rowLabel: drilled ? "station" : "state",
-    marginLeft: drilled ? 150 : 56,
+    mode: changesMode,
+    perStation: drilled,
     labelOf: drilled ? (key) => nameOf.get(key) || key : undefined
   });
-  if (!charts) return html`<div class="cgp-notice">Not enough readings yet.</div>`;
-  return html`<div>${changesKeyEl()}${changesSummary}${charts}</div>`;
+  if (!drawn) return html`<div class="cgp-notice">Not enough readings yet.</div>`;
+  // A station's cell for one day is one reading: it fell, held or rose.
+  const single = drilled && !drawn.weekly;
+  return html`<div>${changesKeyEl(changesMode, single)}${changesSummary}${drawn.charts}</div>`;
 }
 
 // Manual legend: Plot draws none for function fills, and tooltips are
 // inaccessible on touch devices.
-function changesKeyEl() {
+function changesKeyEl(mode, single) {
+  const swatch = (color) =>
+    html`<span class="cgp-swatch" style=${"background:" + color}></span>`;
+  const missing = html`<span class="cgp-legend-missing">${swatch(
+    palette.missing
+  )} no earlier reading</span>`;
+  if (mode === "often") {
+    return html`<div class="cgp-legend cgp-changes-key">
+      <span class="cgp-legend-end">0%</span>${palette.ramp.map(swatch)}<span
+        class="cgp-legend-end">100%</span>
+      <span class="cgp-legend-note">share of the readings in a cell where the posted price had
+        moved since the station's previous reading</span>
+      ${missing}
+    </div>`;
+  }
+  const [fell, , flat, , rose] = palette.diverging;
   return html`<div class="cgp-legend cgp-changes-key">
-    <span class="cgp-legend-end">0%</span>${palette.ramp.map(
-      (color) => html`<span class="cgp-swatch" style=${"background:" + color}></span>`
-    )}<span class="cgp-legend-end">100%</span>
-    <span class="cgp-legend-note">share of the readings in a cell where the posted price had
-      moved since the station's previous reading</span>
-    <span class="cgp-legend-missing"><span class="cgp-swatch" style=${
-      "background:" + palette.missing
-    }></span> fewer than 3 readings</span>
+    <span class="cgp-legend-end">${single ? "▼ Fell" : "▼ More fell"}</span>${(single
+      ? [fell, flat, rose]
+      : palette.diverging
+    ).map(swatch)}<span class="cgp-legend-end">${single ? "Rose ▲" : "More rose ▲"}</span>
+    <span class="cgp-legend-note">${
+      single
+        ? "whether the station's posted price fell, held or rose since its previous reading"
+        : "the share of a cell's readings where the posted price rose since the station's " +
+          "previous reading, less the share where it fell"
+    }</span>
+    ${missing}
   </div>`;
 }
 ```
@@ -264,25 +410,33 @@ function changesKeyEl() {
 
 ```{ojs}
 //| output: false
-// Summary line with per-chain counts.
+// One line a chain: how its readings split between a fall, a rise and no move.
 changesSummary = {
   const rows = changesPlace === "All US states" ? changesByState : changesByStation;
   const totals = new Map();
   for (const row of rows) {
-    const t = totals.get(row.brand) || {obs: 0, changed: 0};
+    const t = totals.get(row.brand) || {obs: 0, changed: 0, up: 0, down: 0};
     t.obs += Number(row.n_obs) || 0;
     t.changed += Number(row.n_changed) || 0;
+    t.up += Number(row.n_up) || 0;
+    t.down += Number(row.n_down) || 0;
     totals.set(row.brand, t);
   }
-  const parts = [...totals.entries()]
+  const share = (n, t) => fmtShare((n / t.obs) * 100);
+  const lines = [...totals.entries()]
     .sort()
     .filter(([, t]) => t.obs > 0)
     .map(
       ([brand, t]) =>
-        `${BRAND_NAMES[brand] || brand} ${fmtShare((t.changed / t.obs) * 100)} of ` +
-        `${t.obs.toLocaleString()} readings`
+        html`<div>${BRAND_NAMES[brand] || brand}: ${share(t.down, t)} fell · ${share(
+          t.up,
+          t
+        )} rose · ${share(t.obs - t.changed, t)} unchanged, of ${changesCount(
+          t.obs,
+          "reading"
+        )}</div>`
     );
-  return parts.length ? html`<div class="cgp-notice">${parts.join(" · ")}</div>` : "";
+  return lines.length ? html`<div class="cgp-notice cgp-changes-summary">${lines}</div>` : "";
 }
 ```
 
