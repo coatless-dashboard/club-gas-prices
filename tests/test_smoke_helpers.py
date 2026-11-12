@@ -48,6 +48,7 @@ from smoke_site import (  # noqa: E402
     telling_colors,
     time_of_day_charts,
     tip_units,
+    uncompared_states,
     unexplained_colors,
     usd_series,
 )
@@ -243,6 +244,34 @@ def test_the_smallest_state_is_the_one_with_fewest_stations_pricing_the_grade():
     assert fewest_stations_state(TWO_CHAINS, "diesel") is None
     florida_only = [s for s in TWO_CHAINS if s["region"] == "FL"]
     assert fewest_stations_state(florida_only, "regular") == "FL"
+
+
+def test_a_state_whose_stations_all_opened_on_the_latest_day_has_nothing_compared(
+    tmp_path: Path,
+):
+    import polars as pl
+
+    # Florida's Costco has a day before the latest; Florida's Sam's Club and
+    # Texas's only station opened on it, as Costco's one Washington DC station
+    # did on 2026-11-12. A premium reading compared in Texas says nothing about
+    # regular there.
+    pl.DataFrame(
+        {
+            "capture_date": ["2026-11-11", "2026-11-12", "2026-11-12", "2026-11-12", "2026-11-12"],
+            "station_key": [
+                "US-COSTCO-1364",
+                "US-COSTCO-1364",
+                "US-SAMS-8119",
+                "US-SAMS-6376",
+                "US-SAMS-6376",
+            ],
+            "grade": ["regular", "regular", "regular", "regular", "premium"],
+            "changed": [None, False, None, None, True],
+        }
+    ).write_parquet(tmp_path / "history.parquet")
+    history = tmp_path / "history.parquet"
+    assert uncompared_states(history, TWO_CHAINS, "regular") == {"TX"}
+    assert uncompared_states(history, TWO_CHAINS, "diesel") == set()
 
 
 def test_stations_are_counted_by_state_for_the_grade_they_price():

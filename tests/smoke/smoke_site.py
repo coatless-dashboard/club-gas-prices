@@ -558,6 +558,31 @@ def fewest_stations_state(latest: list[dict], grade: str) -> str | None:
     return min(counts, key=lambda region: (counts[region], region))
 
 
+def uncompared_states(history_path: Path, latest: list[dict], grade: str) -> set[str]:
+    """The US states none of whose `grade` readings has an earlier one to compare.
+
+    Every cell of such a state's Changes drill-down is the key's gray, and
+    rightly. Costco's one Washington DC station opened on 2026-11-12, made DC
+    the smallest state, and failed the drill-down check on every render that
+    day, while the site drew exactly what it should.
+    """
+    import polars as pl
+
+    regions = {
+        station["station_key"]: station["region"]
+        for station in latest
+        if station.get("country") == "US" and station.get("region")
+    }
+    compared = (
+        pl.read_parquet(history_path, columns=["station_key", "grade", "changed"])
+        .filter((pl.col("grade") == grade) & pl.col("changed").is_not_null())["station_key"]
+        .unique()
+    )
+    return set(stations_by_state(latest, grade)) - {
+        regions[key] for key in compared if key in regions
+    }
+
+
 def longest_name_state(latest: list[dict], grade: str) -> str | None:
     """The US state of the station with the longest name among those pricing
     `grade`, whose Changes drill-down has the widest margin of names to fit on
@@ -1287,12 +1312,18 @@ def changes_dates_check(page, failures: Failures, step: str) -> None:
         print(f"{step}: ok, {count} date label(s), none over another", flush=True)
 
 
-def changes_drill_check(page, failures: Failures, step: str) -> None:
-    """A state's drill-down colors its stations' days."""
+def changes_drill_check(page, failures: Failures, step: str, uncompared: bool = False) -> None:
+    """A state's drill-down colors its stations' days.
+
+    An `uncompared` state has no reading with an earlier one, so gray is all it
+    can draw.
+    """
     key = page.evaluate(CHANGES_KEY_JS)
     told = telling_colors(key["cells"], key["missing"])
     if not key["cells"]:
         failures.add(f"{step}: the drill-down drew no cells")
+    elif not told and uncompared:
+        print(f"{step}: ok, all gray, as no reading here has an earlier one yet", flush=True)
     elif not told:
         failures.add(f"{step}: every cell of the drill-down is the key's gray")
     else:
@@ -1835,6 +1866,7 @@ def main() -> int:
                 site_dir / "data" / "summary_daily.parquet", "regular"
             )
             smallest_state = fewest_stations_state(latest, "regular")
+            uncompared = uncompared_states(site_dir / "data" / "history.parquet", latest, "regular")
             small_states = sorted(
                 state for state, count in stations_by_state(latest, "regular").items() if count < 3
             )
@@ -1875,7 +1907,9 @@ def main() -> int:
                         )
                         wait_idle(page, failures, step)
                         changes_cells_check(page, failures, step)
-                        changes_drill_check(page, failures, step)
+                        changes_drill_check(
+                            page, failures, step, uncompared=smallest_state in uncompared
+                        )
                 elif page_id == "about":
                     grade_table_check(page, failures, "step 2 about", meta, latest)
                     controlbar_gap_check(page, failures, "step 2 about")
